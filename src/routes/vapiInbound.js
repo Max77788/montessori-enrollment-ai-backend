@@ -59,28 +59,52 @@ function getBaseDomain(req) {
 //   { assistantId: "vapi-xxx", assistantOverrides: { variableValues: { school_id: "...", school_name: "...", backend_url: "...", knowledge_base: "..." } } }
 // ────────────────────────────────────────────────────────────────────────────
 router.post('/assistant-request', async (req, res) => {
+    const startTime = Date.now();
     try {
         const baseDomain = getBaseDomain(req);
-        const calledNumber = req.body?.phoneNumber?.number || req.body?.to || '';
 
-        console.log(`[VAPI Inbound] Assistant request — called=${calledNumber}`);
-        console.log(`[VAPI Inbound] Base domain: ${baseDomain}`);
+        // ── Log the FULL incoming request ────────────────────────────
+        console.log('══════════════════════════════════════════════════════');
+        console.log('[VAPI ←] POST /vapi/assistant-request');
+        console.log('[VAPI ←] Timestamp:', new Date().toISOString());
+        console.log('[VAPI ←] IP:', req.ip || req.connection?.remoteAddress);
+        console.log('[VAPI ←] Headers:', JSON.stringify({
+            host: req.get('host'),
+            origin: req.get('origin'),
+            referer: req.get('referer'),
+            'user-agent': req.get('user-agent'),
+            'content-type': req.get('content-type'),
+            'x-vapi-signature': req.get('x-vapi-signature') ? 'present (' + (req.get('x-vapi-signature') || '').slice(0, 20) + '...)' : 'missing',
+        }));
+        console.log('[VAPI ←] Body keys:', Object.keys(req.body || {}).join(', ') || 'EMPTY');
+        console.log('[VAPI ←] Full body:', JSON.stringify(req.body, null, 2).slice(0, 2000));
+
+        const calledNumber = req.body?.phoneNumber?.number || req.body?.to || '';
+        const customerNumber = req.body?.customer?.number || req.body?.from || '';
+        const callId = req.body?.call?.id || '';
+
+        console.log('[VAPI ←] Called (to):  ', calledNumber || 'NOT PROVIDED');
+        console.log('[VAPI ←] Customer (from):', customerNumber || 'NOT PROVIDED');
+        console.log('[VAPI ←] Call ID:', callId || 'NOT PROVIDED');
+        console.log('[VAPI ←] Base domain:', baseDomain);
 
         /**
          * Format qaPairs into a knowledge base text string for the AI prompt.
          */
         function formatKnowledgeBase(qaPairs) {
             if (!Array.isArray(qaPairs) || qaPairs.length === 0) return '';
-            return qaPairs
+            const formatted = qaPairs
                 .filter(p => p.question && p.answer)
                 .map((p, i) => `Q${i + 1}: ${p.question}\nA${i + 1}: ${p.answer}`)
                 .join('\n\n');
+            return formatted;
         }
 
         /**
          * Build the response for a given school document.
          */
         function buildResponse(school) {
+            const kb = formatKnowledgeBase(school.qaPairs);
             return {
                 assistantId: school.vapiAssistantId,
                 assistantOverrides: {
@@ -88,46 +112,88 @@ router.post('/assistant-request', async (req, res) => {
                         school_id: school._id.toString(),
                         school_name: school.name,
                         backend_url: baseDomain,
-                        knowledge_base: formatKnowledgeBase(school.qaPairs),
+                        knowledge_base: kb,
                     }
                 }
             };
         }
 
+        // ── No called number → return fallback ──────────────────────
         if (!calledNumber) {
-            console.warn('[VAPI Inbound] No called number in request, returning default');
+            console.warn('[VAPI →] ⚠️ No called number — using first active school as fallback');
             const school = await School.findOne({ status: 'active', vapiAssistantId: { $ne: '' } })
                 .select('vapiAssistantId name _id qaPairs')
                 .lean();
 
-            if (school) return res.json(buildResponse(school));
-            return res.status(404).json({ error: 'No active school with VAPI assistant found' });
+            if (!school) {
+                console.error('[VAPI →] ❌ No active school with VAPI assistant found');
+                return res.status(404).json({ error: 'No active school with VAPI assistant found' });
+            }
+
+            const response = buildResponse(school);
+            console.log('[VAPI →] Fallback response:');
+            console.log('[VAPI →]   school_id:', response.assistantOverrides.variableValues.school_id);
+            console.log('[VAPI →]   school_name:', response.assistantOverrides.variableValues.school_name);
+            console.log('[VAPI →]   backend_url:', response.assistantOverrides.variableValues.backend_url);
+            console.log('[VAPI →]   knowledge_base:', response.assistantOverrides.variableValues.knowledge_base.length, 'chars');
+            console.log('[VAPI →]   assistantId:', response.assistantId);
+            console.log(`[VAPI →] Completed in ${Date.now() - startTime}ms`);
+            console.log('══════════════════════════════════════════════════════');
+            return res.json(response);
         }
 
-        // Find school by phone number
+        // ── Find school by phone number ──────────────────────────────
         const normalizedCalled = normalizePhone(calledNumber);
+        console.log('[VAPI →] Normalized called number:', normalizedCalled);
+
         const schools = await School.find({ status: 'active', vapiAssistantId: { $ne: '' } })
             .select('aiNumber name vapiAssistantId _id qaPairs')
             .lean();
 
+        console.log(`[VAPI →] Active schools with VAPI: ${schools.length}`);
+        schools.forEach(s => {
+            const normalizedNum = normalizePhone(s.aiNumber);
+            const match = normalizedNum === normalizedCalled ? ' ← MATCH' : '';
+            console.log(`[VAPI →]   "${s.name}" | aiNumber=${s.aiNumber || 'NONE'} | normalized=${normalizedNum}${match}`);
+        });
+
         const school = schools.find(s => normalizePhone(s.aiNumber) === normalizedCalled);
 
         if (!school) {
-            console.warn(`[VAPI Inbound] No school found for number: ${normalizedCalled}`);
+            console.warn(`[VAPI →] ⚠️ No school matched called number: ${normalizedCalled}`);
             const fallback = schools[0];
             if (fallback) {
-                console.warn(`[VAPI Inbound] Falling back to: ${fallback.name}`);
-                return res.json(buildResponse(fallback));
+                console.warn(`[VAPI →] Using fallback: "${fallback.name}"`);
+                const response = buildResponse(fallback);
+                console.log('[VAPI →] Fallback response — school_id:', response.assistantOverrides.variableValues.school_id);
+                console.log(`[VAPI →] Completed in ${Date.now() - startTime}ms`);
+                console.log('══════════════════════════════════════════════════════');
+                return res.json(response);
             }
+            console.error(`[VAPI →] ❌ No schools with VAPI at all`);
+            console.log('══════════════════════════════════════════════════════');
             return res.status(404).json({ error: 'No school found for this number' });
         }
 
-        console.log(`[VAPI Inbound] Matched: ${school.name} (${school._id})`);
-        console.log(`[VAPI Inbound] Knowledge base: ${(school.qaPairs || []).length} Q&A pairs`);
-        res.json(buildResponse(school));
+        console.log(`[VAPI →] ✅ Matched: "${school.name}" (${school._id})`);
+        console.log(`[VAPI →] Q&A pairs: ${(school.qaPairs || []).length}`);
+
+        const response = buildResponse(school);
+        console.log('[VAPI →] Response summary:');
+        console.log('[VAPI →]   school_id:', response.assistantOverrides.variableValues.school_id);
+        console.log('[VAPI →]   school_name:', response.assistantOverrides.variableValues.school_name);
+        console.log('[VAPI →]   backend_url:', response.assistantOverrides.variableValues.backend_url);
+        console.log('[VAPI →]   knowledge_base:', response.assistantOverrides.variableValues.knowledge_base.length, 'chars');
+        console.log('[VAPI →]   assistantId:', response.assistantId);
+        console.log(`[VAPI →] Completed in ${Date.now() - startTime}ms`);
+        console.log('══════════════════════════════════════════════════════');
+
+        res.json(response);
 
     } catch (err) {
-        console.error('[VAPI Inbound] Error:', err.message);
+        console.error('[VAPI →] ❌ Exception after', Date.now() - startTime, 'ms:', err.message);
+        console.error('[VAPI →] Stack:', err.stack?.split('\n').slice(0, 4).join('\n'));
+        console.log('══════════════════════════════════════════════════════');
         res.status(500).json({ error: 'Internal server error' });
     }
 });
