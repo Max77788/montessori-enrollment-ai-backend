@@ -1,5 +1,11 @@
 require('dotenv').config();
 process.env.TZ = 'America/Chicago'; // Force global execution context to CST timezone
+
+// Strip trailing slashes from URL env vars so nothing breaks downstream
+['BACKEND_URL', 'FRONTEND_URL', 'FORM_BASE_URL', 'CORS_ORIGINS'].forEach(key => {
+    if (process.env[key]) process.env[key] = process.env[key].replace(/\/+$/, '');
+});
+
 const express = require('express');
 const compression = require('compression');
 const cors = require('cors');
