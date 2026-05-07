@@ -365,9 +365,9 @@ async function importPhoneNumber({ number, name, assistantId, serverUrl }) {
             number,
             provider: 'twilio',
         };
-        if (name) payload.name = name;
-        if (assistantId) payload.assistantId = assistantId;
-        if (serverUrl) payload.serverUrl = serverUrl;
+        payload.name = name || '';
+        payload.assistantId = assistantId || null;
+        payload.serverUrl = serverUrl || '';
 
         // Pass Twilio credentials so VAPI can manage the number
         if (process.env.TWILIO_ACCOUNT_SID) payload.twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -384,6 +384,22 @@ async function importPhoneNumber({ number, name, assistantId, serverUrl }) {
         if (response.status === 201 || response.status === 200) {
             const vapiPhoneId = response.data.id;
             console.log(`[VAPI] Phone number imported: id=${vapiPhoneId}, number=${response.data.number || number}`);
+
+            // Follow-up PATCH to ensure assistantId + serverUrl persist
+            const patchPayload = {
+                assistantId: assistantId || null,
+                serverUrl: serverUrl || '',
+            };
+            try {
+                const patchRes = await axios.patch(`${VAPI_BASE_URL}/phone-number/${vapiPhoneId}`, patchPayload, {
+                    headers: getHeaders(),
+                    validateStatus: null,
+                });
+                console.log(`[VAPI] Post-import PATCH: status=${patchRes.status}, assistantId=${assistantId || 'null'}, serverUrl=${serverUrl || '(empty)'}`);
+            } catch (patchErr) {
+                console.warn('[VAPI] Post-import PATCH failed:', patchErr.message);
+            }
+
             return response.data;
         }
 
@@ -424,7 +440,6 @@ async function findPhoneNumber(number) {
         return null;
     } catch (err) {
         console.error('[VAPI] Find phone number error:', err.message);
-        return null;
         return null;
     }
 }
