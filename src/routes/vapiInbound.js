@@ -116,8 +116,10 @@ router.post('/assistant-request', async (req, res) => {
             const kb = formatKnowledgeBase(school.qaPairs);
             const asstId = school.vapiAssistantId || DEFAULT_ASSISTANT_ID;
             const cleanBaseUrl = baseDomain.replace(/\/+$/, ''); // strip trailing slash
+            const calendarProvider = school.preferredCalendar || 'google';
 
             console.log('[VAPI →] Using assistantId:', asstId, school.vapiAssistantId ? '(from school)' : '(DEFAULT fallback)');
+            console.log('[VAPI →] Calendar:', calendarProvider);
 
             return {
                 assistantId: asstId,
@@ -128,6 +130,10 @@ router.post('/assistant-request', async (req, res) => {
                         backend_url: cleanBaseUrl,
                         knowledge_base: kb,
                         customer_number: customerNumber || '',
+                        calendar_provider: calendarProvider,
+                        business_hours_start: school.businessHoursStart || '09:00',
+                        business_hours_end: school.businessHoursEnd || '17:00',
+                        school_address: school.address || '',
                     }
                 }
             };
@@ -143,7 +149,7 @@ router.post('/assistant-request', async (req, res) => {
             const phoneDoc = await PhoneNumber.findOne({ vapiPhoneId: vapiPhoneId }).lean();
             if (phoneDoc && phoneDoc.schoolId) {
                 school = await School.findById(phoneDoc.schoolId)
-                    .select('vapiAssistantId name _id qaPairs aiNumber')
+                    .select('vapiAssistantId name _id qaPairs aiNumber preferredCalendar businessHoursStart businessHoursEnd address')
                     .lean();
                 console.log(`[VAPI →] Found by VAPI phone ID: "${school?.name}" (phone: ${phoneDoc.phone_number})`);
             }
@@ -155,7 +161,7 @@ router.post('/assistant-request', async (req, res) => {
             console.log('[VAPI →] Normalized called number:', normalizedCalled);
 
             const schools = await School.find({ status: 'active' })
-                .select('aiNumber name vapiAssistantId _id qaPairs')
+                .select('aiNumber name vapiAssistantId _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address')
                 .lean();
 
             console.log(`[VAPI →] Active schools: ${schools.length}`);
@@ -172,7 +178,7 @@ router.post('/assistant-request', async (req, res) => {
         if (!school) {
             console.warn('[VAPI →] ⚠️ No school found — using first active school as fallback');
             school = await School.findOne({ status: 'active' })
-                .select('vapiAssistantId name _id qaPairs')
+                .select('vapiAssistantId name _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address')
                 .lean();
 
             if (!school) {
