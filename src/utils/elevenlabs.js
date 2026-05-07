@@ -149,30 +149,63 @@ This greeting must always be included. Never skip it.
 
 "And could you please spell your email for me?"
 
-EMAIL CAPTURE
+EMAIL CAPTURE — CRITICAL STEP
 
-After parent spells email, read it back slowly, one character
-at a time:
+After the parent spells their email, you MUST read it back
+slowly, one character at a time.
 
-Say: "Let me make sure I have that right…"
+SAY EXACTLY: "Let me make sure I have that right…"
 
-Spell each character individually with a pause between each.
+Then spell each character individually with a short pause
+between each character.
+
+For numbers, say the digit name: "eight" NOT "8".
+For special characters: "at sign" for @, "dot" for .
 Do not spell common domains character by character like
-@gmail.com, @yahoo.com, etc.
+@gmail.com, @yahoo.com, @hotmail.com, @outlook.com.
 
-Example: "A. M. A. R. C. eight. three. nine. nine. @gmail.com"
+Example read-back:
+"A. M. A. R. C. eight. three. nine. nine. @gmail.com"
 
-Then ask:
+THEN ASK: "Did I get that correct?"
 
-"Did I get that correct?"
+Wait for the caller to say "yes" / "correct" / "that's right"
+before proceeding. Do NOT move on until email is confirmed.
 
-Wait for confirmation before proceeding.
-Do not move on until the email is confirmed.
-Never skip this step.
+If the caller says "no" or corrects you:
+- Update ONLY the specific characters they corrected.
+- Do NOT re-read the entire email from scratch.
+- Re-read ONLY the corrected portion, then ask again:
+  "…at gmail dot com. Did I get that right?"
+- Repeat confirmation until the caller says yes.
 
-If the caller corrects you, update only the specific characters
-they corrected — do not re-read the entire email from scratch.
-Then re-confirm the corrected version once more.
+If the caller is having trouble spelling or you're not
+confident you have it right:
+
+EMAIL FALLBACK OPTIONS (try in this order):
+
+1. Offer to send a text message with the inquiry form link:
+   "No problem — I can send you a quick text with our
+   inquiry form link. You can fill out your email there
+   and it'll come right to us."
+
+2. Offer to take their phone number as primary contact:
+   "Let me make sure I have your phone number right instead,
+   and our team can follow up with you that way."
+
+3. If you've tried twice and still can't confirm the email:
+   "I want to make sure we don't lose your information.
+   Let me confirm your phone number, and someone from
+   our team will reach out to get your email."
+
+CRITICAL RULES:
+- Never skip email read-back. This is mandatory.
+- Never accept an unconfirmed email.
+- Never guess or assume characters the caller didn't say.
+- If the caller refuses to give an email, use fallback #2.
+- Common mis-heard letters: B/P/T/D/V/C/Z, M/N, F/S
+- When you hear ambiguous letters, use clarifying words:
+  "Was that B as in 'boy' or P as in 'papa'?"
 
 Continue:
 
@@ -413,6 +446,9 @@ async function createSchoolAgent(schoolName, knowledgeBaseId = null, toolIds = [
             tool_ids: finalToolIds,
             voice_id: "jqcCZkN6Knx8BJ5TBdYR",// Default voice
             post_call_webhook_url: "https://montessori-enrollment-ai-backend.onrender.com/api/v1/webhook/elevenlabs",
+            // Explicitly disable human transfer at agent creation — schools opt in via Settings
+            enable_human_transfer: false,
+            human_transfer_rules: [],
         };
 
         console.log(`[Agent Create] POST ${url}`);

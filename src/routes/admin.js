@@ -288,12 +288,17 @@ router.get('/dashboard', async (req, res) => {
             { $sort: { count: -1 } }
         ]);
 
+        // Phone number pool count
+        const phonePoolAvailable = await PhoneNumber.countDocuments({ assignedToSchoolId: { $exists: false } });
+        const phonePoolTotal = await PhoneNumber.countDocuments();
+
         res.json({
             metrics: [
                 { label: 'Total Schools', value: totalSchools },
                 { label: 'Total Calls', value: totalCalls },
                 { label: 'Total Tours Booked', value: totalToursBooked },
-                { label: 'Total Call Minutes', value: Math.round(totalCallMinutes / 60) }, // Convert to minutes
+                { label: 'Total Call Minutes', value: Math.round(totalCallMinutes / 60) },
+                { label: 'Phone Pool', value: phonePoolAvailable, subtitle: `${phonePoolAvailable} available / ${phonePoolTotal} total` },
             ],
             callMinutesOverTime,
             topSchoolsByMinutes,
@@ -438,7 +443,8 @@ router.post('/schools', async (req, res) => {
             { schoolId: school._id, type: 'google', name: 'Google Workspace', connected: false },
         ]);
 
-        const refCode = `ref-${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now().toString(36)}`;
+        // Phone number purchased manually by the school via Settings → "Purchase Phone Number"
+        const refCode =`ref-${name.toLowerCase().replace(/\s+/g, '-')}-${Date.now().toString(36)}`;
         await ReferralLink.create({ schoolId: school._id, code: refCode });
 
         let referralLinked = false;
@@ -1045,12 +1051,165 @@ router.get('/integrations', async (req, res) => {
                 schoolStatus: i.schoolId?.status || 'unknown',
                 connected: i.connected,
                 connectedAt: i.connectedAt,
+                tokenExpiresOn: i.config?.expiresOn || i.config?.tokenExpiryDate || null,
+                tokenEmail: i.config?.account?.username || i.config?.userEmail || null,
             });
         });
 
         res.json(Object.values(grouped));
     } catch (err) {
         console.error('Admin integrations error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GET /api/admin/platform-status — Infrastructure health overview
+router.get('/platform-status', async (req, res) => {
+    try {
+        const status = {
+            timestamp: new Date().toISOString(),
+            services: []
+        };
+
+        // Render (our hosting) — always "connected" if the API is responding
+        status.services.push({
+            name: 'Render',
+            type: 'hosting',
+            status: 'connected',
+            detail: 'API is responding',
+            accessUrl: 'https://dashboard.render.com',
+            lastChecked: new Date().toISOString()
+        });
+
+        // MongoDB
+        try {
+            const mongoose = require('mongoose');
+            const dbState = mongoose.connection.readyState;
+            // 0=disconnected, 1=connected, 2=connecting, 3=disconnecting
+            const dbStatus = dbState === 1 ? 'connected' : dbState === 2 ? 'connecting' : 'disconnected';
+            status.services.push({
+                name: 'MongoDB',
+                type: 'database',
+                status: dbStatus,
+                detail: `State: ${dbState} (0=disconnected, 1=connected, 2=connecting)`,
+                lastChecked: new Date().toISOString()
+            });
+        } catch (dbErr) {
+            status.services.push({
+                name: 'MongoDB',
+                type: 'database',
+                status: 'disconnected',
+                detail: dbErr.message,
+                lastChecked: new Date().toISOString()
+            });
+        }
+
+        // ElevenLabs API
+        const elevnlabsConfigured = !!(process.env.ELEVENLABS_API_URL && process.env.ELEVENLABS_API_KEY);
+        status.services.push({
+            name: 'ElevenLabs',
+            type: 'voice_ai',
+            status: elevnlabsConfigured ? 'connected' : 'disconnected',
+            detail: elevnlabsConfigured ? 'API configured' : 'ELEVENLABS_API_URL or ELEVENLABS_API_KEY not set',
+            accessUrl: elevnlabsConfigured ? process.env.ELEVENLABS_API_URL : null,
+            lastChecked: new Date().toISOString()
+        });
+
+        // VAPI AI
+        const vapiConfigured = !!process.env.VAPI_API_KEY;
+        const vapiSchoolCount = await School.countDocuments({ voiceProvider: 'vapi' });
+        status.services.push({
+            name: 'VAPI AI',
+            type: 'voice_ai',
+            status: vapiConfigured ? 'connected' : 'disconnected',
+            detail: vapiConfigured ? `API configured, ${vapiSchoolCount} school(s) using VAPI` : 'VAPI_API_KEY not set',
+            accessUrl: 'https://dashboard.vapi.ai',
+            lastChecked: new Date().toISOString()
+        });
+
+        // Twilio (or ElevenLabs SIP) — check if phone numbers exist
+        const PhoneNumber = require('../models/PhoneNumber');
+        const phoneCount = await PhoneNumber.countDocuments();
+        status.services.push({
+            name: 'Phone Numbers (SIP)',
+            type: 'telephony',
+            status: phoneCount > 0 ? 'connected' : 'degraded',
+            detail: `${phoneCount} phone number(s) in pool`,
+            lastChecked: new Date().toISOString()
+        });
+
+        // Microsoft Calendar — check connected count
+        const msConnected = await Integration.countDocuments({ type: 'outlook', connected: true });
+        status.services.push({
+            name: 'Microsoft Calendar',
+            type: 'calendar',
+            status: msConnected > 0 ? 'connected' : 'disconnected',
+            detail: `${msConnected} school(s) connected`,
+            accessUrl: 'https://portal.azure.com',
+            lastChecked: new Date().toISOString()
+        });
+
+        // Google Calendar — check connected count
+        const googleConnected = await Integration.countDocuments({ type: 'google', connected: true });
+        status.services.push({
+            name: 'Google Calendar',
+            type: 'calendar',
+            status: googleConnected > 0 ? 'connected' : 'disconnected',
+            detail: `${googleConnected} school(s) connected`,
+            accessUrl: 'https://console.cloud.google.com',
+            lastChecked: new Date().toISOString()
+        });
+
+        // PayPal
+        const paypalConfigured = !!(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
+        status.services.push({
+            name: 'PayPal',
+            type: 'billing',
+            status: paypalConfigured ? 'connected' : 'disconnected',
+            detail: paypalConfigured ? 'API configured' : 'PAYPAL_CLIENT_ID or PAYPAL_CLIENT_SECRET not set',
+            accessUrl: 'https://developer.paypal.com',
+            lastChecked: new Date().toISOString()
+        });
+
+        // SMTP
+        const smtpConfigured = !!(process.env.SMTP_HOST && process.env.SMTP_USER);
+        status.services.push({
+            name: 'SMTP Email',
+            type: 'email',
+            status: smtpConfigured ? 'connected' : 'disconnected',
+            detail: smtpConfigured ? `SMTP configured (${process.env.SMTP_HOST})` : 'SMTP not configured — email fallback only',
+            lastChecked: new Date().toISOString()
+        });
+
+        // OpenAI
+        const openaiConfigured = !!process.env.OPENAI_API_KEY;
+        status.services.push({
+            name: 'OpenAI',
+            type: 'ai',
+            status: openaiConfigured ? 'connected' : 'disconnected',
+            detail: openaiConfigured ? 'API key configured' : 'OPENAI_API_KEY not set',
+            lastChecked: new Date().toISOString()
+        });
+
+        // Memory/CPU
+        const memUsage = process.memoryUsage();
+        const heapUsedMB = (memUsage.heapUsed / 1024 / 1024).toFixed(0);
+        const heapTotalMB = (memUsage.heapTotal / 1024 / 1024).toFixed(0);
+        const rssMB = (memUsage.rss / 1024 / 1024).toFixed(0);
+        const uptimeH = Math.floor(process.uptime() / 3600);
+        const uptimeM = Math.floor((process.uptime() % 3600) / 60);
+
+        status.services.push({
+            name: 'Server Resources',
+            type: 'infrastructure',
+            status: 'connected',
+            detail: `Heap: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB, Uptime: ${uptimeH}h ${uptimeM}m`,
+            lastChecked: new Date().toISOString()
+        });
+
+        res.json(status);
+    } catch (err) {
+        console.error('Platform status error:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });

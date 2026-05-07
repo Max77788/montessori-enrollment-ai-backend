@@ -17,7 +17,7 @@ const {
 } = require('../utils/elevenlabs');
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'childcare-enrollment-ai-secret-key-2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'nest-ops-secret-key-2026';
 
 // Google OAuth2 Client for Authentication
 // Use separate redirect URI for auth vs calendar integrations

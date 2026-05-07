@@ -15,16 +15,37 @@ const publicRoutes = require('./src/routes/public');
 const webhookRoutes = require('./src/routes/webhook');
 const billingRoutes = require('./src/routes/billing');
 const paypalWebhookRoutes = require('./src/routes/paypalWebhook');
+const vapiWebhookRoutes = require('./src/routes/vapiWebhook');
+const vapiInboundRoutes = require('./src/routes/vapiInbound');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// CORS: allow env CORS_ORIGINS (comma-separated) in production, else localhost
+// CORS: allow env CORS_ORIGINS (comma-separated) in production, else auto-detect
 const corsOrigins = process.env.CORS_ORIGINS
     ? process.env.CORS_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
-    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:5001'];
+    : (() => {
+        const origins = ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:5001'];
+        // Auto-include FRONTEND_URL if set
+        if (process.env.FRONTEND_URL) origins.push(process.env.FRONTEND_URL);
+        if (process.env.FORM_BASE_URL) origins.push(process.env.FORM_BASE_URL);
+        return origins;
+    })();
 app.use(cors({
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+        // Allow requests with no origin (server-to-server, curl, etc.)
+        if (!origin) return callback(null, true);
+        if (corsOrigins.includes(origin)) return callback(null, true);
+        // In production without explicit CORS_ORIGINS, allow any *.vercel.app or *.onrender.com
+        if (!process.env.CORS_ORIGINS && (
+            origin.endsWith('.vercel.app') ||
+            origin.endsWith('.onrender.com') ||
+            origin.includes('localhost')
+        )) {
+            return callback(null, true);
+        }
+        callback(new Error(`Origin ${origin} not allowed by CORS`));
+    },
     credentials: true,
 }));
 app.use(compression());
@@ -41,6 +62,8 @@ app.use('/api/integrations', integrationRoutes.router);
 app.use('/api', translateRoutes);
 app.use('/api/public', publicRoutes);
 app.use('/api/v1/webhook', webhookRoutes);
+app.use('/api/v1/webhook', vapiWebhookRoutes); // VAPI webhooks
+app.use('/vapi', vapiInboundRoutes);            // VAPI inbound: /vapi/assistant-request, /vapi/webhook
 app.use('/api/billing', billingRoutes);
 
 // Health check
@@ -58,13 +81,16 @@ async function start() {
         const { initReminderService } = require('./src/services/reminderService');
         initReminderService();
 
+        const { initAlertService } = require('./src/services/alertService');
+        initAlertService();
+
         app.listen(PORT, () => {
-            console.log(`\n🚀 Childcare Enrollment AI Backend`);
+            console.log(`\n🚀 Nest Ops Backend`);
             console.log(`   Server running on http://localhost:${PORT}`);
             console.log(`   Database: MongoDB`);
             console.log(`   API Health: http://localhost:${PORT}/api/health`);
             console.log(`\n📋 Default Credentials:`);
-            console.log(`   Admin: admin@enrollmentai.com / admin123`);
+            console.log(`   Admin: admin@nestops.com / admin123`);
             console.log(`   School: sunshine@school.com / school123\n`);
         });
     } catch (err) {

@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'childcare-enrollment-ai-secret-key-2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'nest-ops-secret-key-2026';
 
 async function authMiddleware(req, res, next) {
     let token = null;

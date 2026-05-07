@@ -148,8 +148,18 @@ router.get('/google/callback', async (req, res) => {
 
         res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?success=google`);
     } catch (err) {
-        console.error('Google Callback Error:', err);
-        res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?error=google`);
+        console.error('Google Callback Error:', err.message);
+
+        // Detect specific Google OAuth errors for better diagnostics
+        let errorCode = 'google';
+        if (err.message?.includes('access_denied') || err.message?.includes('developer_email')) {
+            errorCode = 'google_test_user';
+            console.warn('[Integrations] Google OAuth requires test user registration. Add this email to Google Cloud Console → OAuth consent screen → Test users.');
+        } else if (err.message?.includes('invalid_grant')) {
+            errorCode = 'google_expired';
+        }
+
+        res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?error=${errorCode}`);
     }
 });
 

@@ -327,7 +327,8 @@ router.post('/refer/:code/register', async (req, res) => {
             { schoolId: school._id, type: 'google', name: 'Google Workspace', connected: false },
         ]);
 
-        const newRefCode = `ref-${schoolName.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now().toString(36)}`;
+        // Phone number purchased manually by the school via Settings → "Purchase Phone Number"
+        const newRefCode =`ref-${schoolName.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now().toString(36)}`;
         await ReferralLink.create({ schoolId: school._id, code: newRefCode });
 
         await Referral.create({

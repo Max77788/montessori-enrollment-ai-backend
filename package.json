@@ -1,7 +1,7 @@
 {
-  "name": "childcare-enrollment-ai-backend",
+  "name": "nest-ops-backend",
   "version": "1.0.0",
-  "description": "Backend for Childcare Enrollment AI Platform (MongoDB)",
+  "description": "Backend for Nest Ops Platform (MongoDB)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

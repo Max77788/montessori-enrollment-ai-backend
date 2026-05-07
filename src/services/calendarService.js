@@ -304,6 +304,7 @@ async function createCalendarEvent(schoolId, opts) {
     const end = endDateTime instanceof Date ? endDateTime : new Date(endDateTime);
 
     if (!title || !start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
+        console.error('[Calendar] INVALID PARAMS:', { title, start, end });
         return { success: false, error: 'Invalid title or date range' };
     }
 
@@ -311,62 +312,64 @@ async function createCalendarEvent(schoolId, opts) {
     const school = await School.findById(schoolId).select('preferredCalendar').lean();
     const preference = school?.preferredCalendar || 'google';
 
-    console.log(`[Calendar] Creating event for school: ${schoolId}`);
-    console.log(`[Calendar] School preference: ${preference}`);
+    console.log(`[Calendar] ========================================`);
+    console.log(`[Calendar] CREATE EVENT — schoolId=${schoolId}, preference=${preference}`);
+    console.log(`[Calendar] Title: "${title}", Start: ${start.toISOString()}, End: ${end.toISOString()}`);
+    console.log(`[Calendar] Parent email: ${parentEmail || 'N/A'}`);
 
     if (preference === 'none') {
         console.log('[Calendar] Calendar sync disabled for this school');
         return { success: true, message: 'Calendar sync disabled' };
     }
 
-    // Convert schoolId to ObjectId if it's a string
-    const schoolObjectId = mongoose.Types.ObjectId.isValid(schoolId) 
+    // Convert schoolId to ObjectId if it's a string — normalize both forms for query
+    const schoolObjectId = mongoose.Types.ObjectId.isValid(schoolId)
         ? (schoolId instanceof mongoose.Types.ObjectId ? schoolId : new mongoose.Types.ObjectId(schoolId))
         : schoolId;
 
-    const integrationCriteria = {
+    // DOUBLE QUERY: try both ObjectId and string forms to catch schema mismatches
+    let integrations = await Integration.find({
         schoolId: schoolObjectId,
         connected: true,
-        type: { $in: ['google', 'outlook'] }
-    };
+        type: preference === 'both' ? { $in: ['google', 'outlook'] } : preference
+    }).lean();
 
-    // Set the type filter based on preference
-    if (preference === 'google') {
-        integrationCriteria.type = 'google';
-    } else if (preference === 'outlook') {
-        integrationCriteria.type = 'outlook';
-    } else if (preference === 'both') {
-        // Keep both types in the $in array
-        integrationCriteria.type = { $in: ['google', 'outlook'] };
+    // Fallback: try string form if ObjectId query returned nothing
+    if (integrations.length === 0 && typeof schoolId === 'string') {
+        console.log(`[Calendar] ObjectId query returned 0 results, trying string schoolId fallback...`);
+        integrations = await Integration.find({
+            schoolId: schoolId,
+            connected: true,
+            type: preference === 'both' ? { $in: ['google', 'outlook'] } : preference
+        }).lean();
     }
-    // If preference is 'none', we already returned earlier
 
-    console.log(`[Calendar] Searching for integrations with criteria:`, JSON.stringify({
-        schoolId: schoolId.toString(),
-        connected: true,
-        type: integrationCriteria.type
-    }));
-
-    const integrations = await Integration.find(integrationCriteria).lean();
-    console.log(`[Calendar] Found ${integrations.length} integration(s) matching criteria`);
+    console.log(`[Calendar] Found ${integrations.length} connected integration(s) for preference=${preference}`);
 
     if (integrations.length > 0) {
         integrations.forEach((int, idx) => {
-            console.log(`[Calendar] Integration ${idx + 1}: type=${int.type}, connected=${int.connected}, hasTokens=${!!int.config?.tokens?.access_token || !!int.config?.accessToken}`);
+            const hasGoogleTokens = !!int.config?.tokens?.access_token;
+            const hasOutlookTokens = !!int.config?.accessToken;
+            const hasMsalCache = !!int.config?.msalCache;
+            console.log(`[Calendar] Integration ${idx + 1}: type=${int.type}, connected=${int.connected}, hasGoogleTokens=${hasGoogleTokens}, hasOutlookTokens=${hasOutlookTokens}, hasMsalCache=${hasMsalCache}`);
         });
     }
 
     if (!integrations || integrations.length === 0) {
-        // Check if there are any integrations at all for this school
-        const allIntegrations = await Integration.find({ schoolId: schoolObjectId }).lean();
-        console.warn(`[Calendar] No connected integration found for preference: ${preference}`);
-        console.warn(`[Calendar] Total integrations for school: ${allIntegrations.length}`);
+        const allIntegrations = await Integration.find({
+            $or: [
+                { schoolId: schoolObjectId },
+                ...(typeof schoolId === 'string' ? [{ schoolId: schoolId }] : [])
+            ]
+        }).lean();
+        console.error(`[Calendar] ❌ NO CONNECTED INTEGRATION for preference=${preference}`);
+        console.error(`[Calendar] Total integrations for school: ${allIntegrations.length}`);
         if (allIntegrations.length > 0) {
             allIntegrations.forEach((int, idx) => {
-                console.warn(`[Calendar] Integration ${idx + 1}: type=${int.type}, connected=${int.connected}`);
+                console.error(`[Calendar]   ${idx + 1}: type=${int.type}, connected=${int.connected}`);
             });
         }
-        return { success: false, error: 'Calendar provider not connected or mismatched preference.' };
+        return { success: false, error: `Calendar provider (${preference}) not connected. Connect in Integrations settings.` };
     }
 
     let overallSuccess = false;
@@ -376,6 +379,7 @@ async function createCalendarEvent(schoolId, opts) {
 
     for (const integration of integrations) {
         let result;
+        console.log(`[Calendar] Attempting ${integration.type} event creation...`);
         if (integration.type === 'google') {
             result = await createGoogleCalendarEvent(integration, { title, start, end, description, parentEmail });
         } else if (integration.type === 'outlook') {
@@ -383,26 +387,27 @@ async function createCalendarEvent(schoolId, opts) {
         }
 
         if (result && result.success) {
+            console.log(`[Calendar] ✅ ${integration.type} event created: ${result.eventId}`);
             overallSuccess = true;
             if (!mainEventId) {
                 mainEventId = result.eventId;
                 mainProvider = integration.type;
             }
         } else if (result && result.error) {
+            console.error(`[Calendar] ❌ ${integration.type} FAILED: ${result.error}`);
             errors.push(`${integration.type}: ${result.error}`);
         }
     }
 
     if (overallSuccess) {
-        return { 
-            success: true, 
-            eventId: mainEventId, 
-            provider: mainProvider,
-            email: integrations.find(i => i.type === mainProvider)?.config?.userEmail || 
-                   integrations.find(i => i.type === mainProvider)?.config?.account?.username
-        };
+        const email = integrations.find(i => i.type === mainProvider)?.config?.userEmail ||
+                      integrations.find(i => i.type === mainProvider)?.config?.account?.username;
+        console.log(`[Calendar] ✅ SUCCESS — provider=${mainProvider}, eventId=${mainEventId}, email=${email}`);
+        return { success: true, eventId: mainEventId, provider: mainProvider, email };
     } else {
-        return { success: false, error: errors.join(', ') || 'Failed to create calendar event' };
+        const errorMsg = errors.join(' | ') || 'Failed to create calendar event';
+        console.error(`[Calendar] ❌ ALL PROVIDERS FAILED: ${errorMsg}`);
+        return { success: false, error: errorMsg };
     }
 }
 
@@ -457,10 +462,16 @@ async function createGoogleCalendarEvent(integration, { title, start, end, descr
 
 async function createOutlookCalendarEvent(integration, { title, start, end, description, parentEmail }) {
     try {
+        console.log(`[Calendar:Outlook] Starting event creation...`);
+        console.log(`[Calendar:Outlook] Integration schoolId=${integration.schoolId}, hasAccessToken=${!!integration.config?.accessToken}, hasMsalCache=${!!integration.config?.msalCache}`);
+
         const accessToken = await refreshOutlookToken(integration);
         if (!accessToken) {
+            console.error(`[Calendar:Outlook] ❌ Token refresh returned null — token expired or revoked`);
             return { success: false, error: 'Outlook not authorized or token expired. Reconnect in Integrations.' };
         }
+
+        console.log(`[Calendar:Outlook] Token obtained (length=${accessToken.length})`);
 
         // Fetch school timezone and send local time so school calendar shows same time as parent
         const School = require('../models/School');
@@ -477,17 +488,51 @@ async function createOutlookCalendarEvent(integration, { title, start, end, desc
                 { emailAddress: { address: parentEmail }, type: 'required' }
             ] : []
         };
+
+        console.log(`[Calendar:Outlook] POST https://graph.microsoft.com/v1.0/me/events`);
+        console.log(`[Calendar:Outlook] Event: ${JSON.stringify({ subject: event.subject, start: event.start, end: event.end, attendees: event.attendees?.length || 0 })}`);
+
         const res = await axios.post(
             'https://graph.microsoft.com/v1.0/me/events',
             event,
-            { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } }
+            {
+                headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                validateStatus: null // Don't throw on non-2xx — we want the full error body
+            }
         );
+
+        if (res.status < 200 || res.status >= 300) {
+            const errorDetail = res.data?.error;
+            const errorMsg = errorDetail?.message || `HTTP ${res.status}`;
+            const errorCode = errorDetail?.code || 'UNKNOWN';
+            console.error(`[Calendar:Outlook] ❌ Graph API error ${res.status}:`, JSON.stringify(res.data, null, 2));
+
+            // Classify error for better diagnostics
+            if (res.status === 401 || res.status === 403) {
+                console.error(`[Calendar:Outlook] Auth error — marking integration disconnected`);
+                await Integration.updateOne(
+                    { _id: integration._id },
+                    { $set: { connected: false, 'config.lastError': errorMsg } }
+                );
+                return { success: false, error: `Outlook authorization failed (${errorCode}): ${errorMsg}. Reconnect in Integrations.` };
+            }
+
+            return { success: false, error: `Outlook API error (${errorCode}): ${errorMsg}` };
+        }
+
         const eventId = res.data.id || '';
+        console.log(`[Calendar:Outlook] ✅ Event created: id=${eventId}, webLink=${res.data.webLink || 'N/A'}`);
         return { success: true, eventId, provider: 'outlook', email: integration.config?.account?.username };
     } catch (err) {
         const msg = err.response?.data?.error?.message || err.message;
-        console.error('[Calendar] Outlook error:', msg);
-        return { success: false, error: msg || 'Failed to create Outlook event' };
+        const code = err.response?.data?.error?.code || err.code || 'NETWORK_ERROR';
+        console.error(`[Calendar:Outlook] ❌ Exception:`, {
+            message: msg,
+            code: code,
+            status: err.response?.status,
+            stack: err.stack?.split('\n').slice(0, 3).join('\n')
+        });
+        return { success: false, error: `Outlook: ${msg || 'Failed to create event'} (${code})` };
     }
 }
 

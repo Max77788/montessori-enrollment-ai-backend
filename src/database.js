@@ -7,7 +7,7 @@ const Integration = require('./models/Integration');
 const ReferralLink = require('./models/ReferralLink');
 
 async function connectDatabase() {
-    const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/childcare-enrollment-ai';
+    const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/nest-ops';
     await mongoose.connect(uri);
     console.log('✅ Connected to MongoDB');
 }
@@ -34,7 +34,7 @@ async function seedDatabase() {
 
     // Create admin user
     await User.create({
-        email: 'admin@enrollmentai.com',
+        email: 'admin@nestops.com',
         passwordHash: adminPasswordHash,
         name: 'Admin',
         role: 'admin',

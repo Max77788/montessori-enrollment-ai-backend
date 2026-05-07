@@ -191,9 +191,19 @@ async function updateAgentWithKnowledgeBase(
                 }
             };
         } else {
+            // Explicitly clear transfer rules AND disable the built-in tool
             payload.human_transfer_rules = [];
+            payload.enable_human_transfer = false;
             payload.built_in_tools = {
-                transfer_to_number: null
+                transfer_to_number: {
+                    type: 'system',
+                    name: 'transfer_to_number',
+                    params: {
+                        system_tool_type: 'transfer_to_number',
+                        transfers: [],
+                        enable_client_message: false
+                    }
+                }
             };
         }
 
@@ -266,6 +276,39 @@ async function updateAgentWithKnowledgeBase(
                 console.log('[Agent PATCH] /agents ensure status:', ensureToolResponse.status);
             } catch (ensureErr) {
                 console.error('[Agent PATCH] Failed to ensure transfer_to_number via /agents endpoint:', ensureErr?.response?.status, ensureErr?.response?.data || ensureErr?.message);
+            }
+        } else {
+            // When disabling transfer, also clear it via the /agents endpoint
+            try {
+                const ensureToolUrl = `${baseUrl}/api/v1/agents/${agentId}`;
+                const ensureToolPayload = {
+                    conversation_config: {
+                        agent: {
+                            prompt: {
+                                built_in_tools: {
+                                    transfer_to_number: {
+                                        type: 'system',
+                                        name: 'transfer_to_number',
+                                        params: {
+                                            system_tool_type: 'transfer_to_number',
+                                            transfers: [],
+                                            enable_client_message: false
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+                const ensureToolResponse = await axios.patch(ensureToolUrl, ensureToolPayload, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(process.env.ELEVENLABS_API_KEY && { 'Authorization': `Bearer ${process.env.ELEVENLABS_API_KEY}` })
+                    }
+                });
+                console.log('[Agent PATCH] transfer_to_number DISABLED via /agents endpoint');
+            } catch (ensureErr) {
+                console.error('[Agent PATCH] Failed to disable transfer_to_number via /agents endpoint:', ensureErr?.response?.status, ensureErr?.response?.data || ensureErr?.message);
             }
         }
 
@@ -1631,11 +1674,16 @@ router.get('/settings', async (req, res) => {
             preferredCalendar: school.preferredCalendar || 'google',
             preferredEmailProvider: school.preferredEmailProvider || 'google',
             elevenlabsAgentId: school.elevenlabsAgentId || '',
+            voiceProvider: school.voiceProvider || 'elevenlabs',
+            vapiAssistantId: school.vapiAssistantId || '',
             enableHumanTransfer: Boolean(school.enableHumanTransfer),
             humanTransferCondition: school.humanTransferCondition || '',
             humanTransferPhoneNumber: school.humanTransferPhoneNumber || '',
             tourConfirmationEmailTemplate: school.tourConfirmationEmailTemplate || '',
             tourReminderSmsTemplate: school.tourReminderSmsTemplate || '',
+            autoTopUpEnabled: school.autoTopUpEnabled || false,
+            autoTopUpThreshold: school.autoTopUpThreshold || 0,
+            autoTopUpAmountMinutes: school.autoTopUpAmountMinutes || 50,
             googleConnected,
             outlookConnected,
         });
@@ -1670,7 +1718,9 @@ router.put('/settings', async (req, res) => {
             smsAutoFollowup, emailAutoFollowup, smsTemplate, emailTemplate,
             qaPairs, preferredCalendar, preferredEmailProvider, adminEmail, elevenlabsAgentId,
             tourConfirmationEmailTemplate, tourReminderSmsTemplate,
-            enableHumanTransfer, humanTransferCondition, humanTransferPhoneNumber
+            enableHumanTransfer, humanTransferCondition, humanTransferPhoneNumber,
+            autoTopUpEnabled, autoTopUpThreshold, autoTopUpAmountMinutes,
+            voiceProvider, vapiAssistantId
         } = req.body;
 
         // Capture old values BEFORE overwriting (for change detection)
@@ -1715,6 +1765,16 @@ router.put('/settings', async (req, res) => {
         if (preferredEmailProvider !== undefined) school.preferredEmailProvider = preferredEmailProvider;
         if (adminEmail !== undefined) school.adminEmail = adminEmail;
         if (elevenlabsAgentId !== undefined) school.elevenlabsAgentId = elevenlabsAgentId;
+        if (voiceProvider !== undefined && ['elevenlabs', 'vapi'].includes(voiceProvider)) {
+            school.voiceProvider = voiceProvider;
+        }
+        if (vapiAssistantId !== undefined) school.vapiAssistantId = vapiAssistantId;
+        if (autoTopUpEnabled !== undefined) school.autoTopUpEnabled = Boolean(autoTopUpEnabled);
+        if (autoTopUpThreshold !== undefined) school.autoTopUpThreshold = parseInt(autoTopUpThreshold, 10) || 0;
+        if (autoTopUpAmountMinutes !== undefined) {
+            const amount = parseInt(autoTopUpAmountMinutes, 10);
+            if (amount >= 25 && amount <= 2000) school.autoTopUpAmountMinutes = amount;
+        }
         if (enableHumanTransfer !== undefined) school.enableHumanTransfer = Boolean(enableHumanTransfer);
         if (humanTransferCondition !== undefined) school.humanTransferCondition = String(humanTransferCondition || '').trim();
         if (humanTransferPhoneNumber !== undefined) {
@@ -1851,6 +1911,202 @@ router.put('/settings', async (req, res) => {
     } catch (err) {
         console.error('[PUT /settings] Error:', err);
         res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+});
+
+// POST /api/school/vapi/create-assistant — Create a VAPI assistant for the school
+router.post('/vapi/create-assistant', async (req, res) => {
+    try {
+        const schoolId = req.user.schoolId;
+        const school = await School.findById(schoolId);
+        if (!school) return res.status(404).json({ error: 'School not found' });
+
+        const backendUrl = process.env.BACKEND_URL ||
+            `${req.protocol}://${req.get('host')}`;
+
+        const { createAssistant } = require('../services/vapiService');
+        const result = await createAssistant({
+            schoolName: school.name,
+            schoolId: school._id.toString(),
+            firstMessage: school.script || undefined,
+            systemPrompt: school.systemPrompt || undefined,
+            backendUrl,
+        });
+
+        if (result.assistantId) {
+            school.vapiAssistantId = result.assistantId;
+            school.voiceProvider = 'vapi';
+            await school.save();
+            res.json({ success: true, assistantId: result.assistantId, message: 'VAPI assistant created' });
+        } else {
+            res.status(500).json({ error: result.error || 'Failed to create VAPI assistant' });
+        }
+    } catch (err) {
+        console.error('[VAPI Create] Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/school/vapi/sync-assistant — Sync assistant config
+router.post('/vapi/sync-assistant', async (req, res) => {
+    try {
+        const schoolId = req.user.schoolId;
+        const school = await School.findById(schoolId);
+        if (!school) return res.status(404).json({ error: 'School not found' });
+        if (!school.vapiAssistantId) return res.status(400).json({ error: 'No VAPI assistant configured' });
+
+        const backendUrl = process.env.BACKEND_URL ||
+            `${req.protocol}://${req.get('host')}`;
+
+        const { updateAssistant, buildVapiTools, NORA_SYSTEM_PROMPT_VAPI, DEFAULT_FIRST_MESSAGE } = require('../services/vapiService');
+
+        const prompt = (school.systemPrompt || NORA_SYSTEM_PROMPT_VAPI)
+            .replace(/{{SCHOOL_NAME}}/g, school.name);
+
+        const updates = {
+            name: `${school.name} - Nora`,
+            model: {
+                provider: 'openai',
+                model: 'gpt-4o',
+                systemPrompt: prompt,
+                temperature: 0.7,
+            },
+            firstMessage: (school.script || DEFAULT_FIRST_MESSAGE)
+                .replace(/{{SCHOOL_NAME}}/g, school.name),
+            tools: buildVapiTools(backendUrl, schoolId),
+            serverUrl: `${backendUrl}/api/v1/webhook/vapi`,
+        };
+
+        const result = await updateAssistant(school.vapiAssistantId, updates);
+        if (result) {
+            res.json({ success: true, message: 'VAPI assistant synced' });
+        } else {
+            res.status(500).json({ error: 'Failed to sync VAPI assistant' });
+        }
+    } catch (err) {
+        console.error('[VAPI Sync] Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/school/purchase-phone
+// Purchases a Twilio number, imports into VAPI/ElevenLabs, and assigns to the school.
+// Called by the school user clicking "Purchase Phone Number" in Settings.
+router.post('/purchase-phone', async (req, res) => {
+    try {
+        const schoolId = req.user.schoolId;
+        const school = await School.findById(schoolId);
+        if (!school) return res.status(404).json({ error: 'School not found' });
+
+        // Already has a number?
+        if (school.aiNumber) {
+            return res.status(400).json({
+                error: `This school already has a phone number: ${school.aiNumber}. `
+                    + 'Contact support to change it.'
+            });
+        }
+
+        console.log(`[Purchase Phone] Starting for school "${school.name}" (${schoolId})`);
+        console.log(`[Purchase Phone] Voice provider: ${school.voiceProvider || 'elevenlabs'}`);
+
+        const baseDomain = process.env.BACKEND_URL ||
+            `${req.protocol}://${req.get('host')}`;
+
+        // ── Step 1: Purchase from Twilio ──────────────────────────
+        const { purchasePhoneNumber } = require('../services/twilioService');
+        const twilioResult = await purchasePhoneNumber({
+            areaCode: process.env.TWILIO_DEFAULT_AREA_CODE || undefined,
+        });
+
+        if (twilioResult.error) {
+            return res.status(500).json({
+                error: `Failed to purchase phone number: ${twilioResult.error}`
+            });
+        }
+
+        console.log(`[Purchase Phone] Twilio: ${twilioResult.phoneNumber}`);
+
+        // ── Step 2: Import into voice provider ────────────────────
+        const provider = school.voiceProvider || 'elevenlabs';
+        let vapiPhoneId = '';
+        let sipPhoneId = '';
+
+        if (provider === 'vapi') {
+            // Create VAPI assistant if needed
+            let vapiAssistantId = school.vapiAssistantId;
+            if (!vapiAssistantId) {
+                const { createAssistant } = require('../services/vapiService');
+                const asstResult = await createAssistant({
+                    schoolName: school.name,
+                    schoolId: schoolId.toString(),
+                    firstMessage: school.script || undefined,
+                    systemPrompt: school.systemPrompt || undefined,
+                    backendUrl: baseDomain,
+                });
+                if (asstResult.assistantId) {
+                    vapiAssistantId = asstResult.assistantId;
+                    school.vapiAssistantId = vapiAssistantId;
+                    school.voiceProvider = 'vapi';
+                }
+            }
+
+            // Import into VAPI
+            const { importPhoneNumber: importVapi } = require('../services/vapiService');
+            const vapiPhone = await importVapi({
+                number: twilioResult.phoneNumber,
+                name: `${school.name} Main`,
+                assistantId: vapiAssistantId || undefined,
+                serverUrl: `${baseDomain}/vapi/assistant-request`,
+            });
+
+            if (vapiPhone && vapiPhone.id) {
+                vapiPhoneId = vapiPhone.id;
+                school.vapiPhoneNumberId = vapiPhoneId;
+                console.log(`[Purchase Phone] VAPI phone ID: ${vapiPhoneId}`);
+            }
+        } else {
+            // ElevenLabs SIP import
+            const { importSipTrunk } = require('../utils/elevenlabs');
+            const sipResult = await importSipTrunk({
+                phone_number: twilioResult.phoneNumber,
+                label: `${school.name} Main`,
+            });
+            if (sipResult && sipResult.phone_number_id) {
+                sipPhoneId = sipResult.phone_number_id;
+                school.agentPhoneNumberId = sipPhoneId;
+            }
+        }
+
+        // ── Step 3: Save to School ──────────────────────────────
+        school.aiNumber = twilioResult.phoneNumber;
+        await school.save();
+
+        // ── Step 4: Store in PhoneNumber pool ────────────────────
+        const PhoneNumber = require('../models/PhoneNumber');
+        await PhoneNumber.create({
+            phone_number_id: vapiPhoneId || sipPhoneId || twilioResult.sid,
+            phone_number: twilioResult.phoneNumber,
+            provider: provider === 'vapi' ? 'vapi' : 'sip_trunk',
+            label: `${school.name} Main`,
+            schoolId: school._id,
+            twilioSid: twilioResult.sid,
+            vapiPhoneId: vapiPhoneId || '',
+            metadata: { purchasedBy: req.user.email, baseDomain },
+        });
+
+        console.log(`[Purchase Phone] ✅ Complete: ${school.name} → ${twilioResult.phoneNumber}`);
+
+        res.json({
+            success: true,
+            phoneNumber: twilioResult.phoneNumber,
+            provider: provider,
+            vapiAssistantId: school.vapiAssistantId || null,
+            message: `Phone number ${twilioResult.phoneNumber} purchased and assigned to ${school.name}.`
+        });
+
+    } catch (err) {
+        console.error('[Purchase Phone] Error:', err);
+        res.status(500).json({ error: err.message || 'Failed to purchase phone number.' });
     }
 });
 

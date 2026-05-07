@@ -15,7 +15,7 @@ async function triggerAutomation(schoolId, leadData) {
         const { parentName, phone, email, childAge } = leadData;
         const formLink = (process.env.FRONTEND_URL || process.env.FORM_BASE_URL)
             ? `${process.env.FRONTEND_URL || process.env.FORM_BASE_URL}/inquiry/${school._id}`
-            : `https://enrollmentai.com/inquiry/${school._id}`;
+            : `https://nestops.com/inquiry/${school._id}`;
 
 
         // Email via SMTP (nodemailer)

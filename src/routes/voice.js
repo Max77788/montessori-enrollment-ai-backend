@@ -33,18 +33,23 @@ function normalizePhone(s) {
 
 // GET /api/voice/agent-config - No auth. Agent calls with the number that was dialed ("To").
 // Query: to=+15551234567  OR  schoolId=507f1f77bcf86cd799439011
+// Provider-aware: returns different config for ElevenLabs vs VAPI
 router.get('/agent-config', async (req, res) => {
     try {
         const { to, schoolId: schoolIdParam } = req.query;
         let school = null;
 
         if (schoolIdParam && mongoose.Types.ObjectId.isValid(schoolIdParam)) {
-            school = await School.findById(schoolIdParam).select('name script businessHoursStart businessHoursEnd language routingNumber escalationNumber').lean();
+            school = await School.findById(schoolIdParam)
+                .select('name script businessHoursStart businessHoursEnd language routingNumber escalationNumber aiNumber voiceProvider vapiAssistantId elevenlabsAgentId qaPairs systemPrompt')
+                .lean();
         }
         if (!school && to) {
             const normalizedTo = normalizePhone(to);
             if (normalizedTo) {
-                const all = await School.find({}).select('name script businessHoursStart businessHoursEnd language routingNumber escalationNumber aiNumber').lean();
+                const all = await School.find({})
+                    .select('name script businessHoursStart businessHoursEnd language routingNumber escalationNumber aiNumber voiceProvider vapiAssistantId elevenlabsAgentId qaPairs systemPrompt')
+                    .lean();
                 school = all.find(s => normalizePhone(s.aiNumber) === normalizedTo) || null;
             }
         }
@@ -55,9 +60,11 @@ router.get('/agent-config', async (req, res) => {
 
         const formLink = process.env.FORM_BASE_URL
             ? `${process.env.FORM_BASE_URL}/inquiry/${school._id}`
-            : `https://enrollmentai.com/inquiry/${school._id}`;
+            : `https://nestops.com/inquiry/${school._id}`;
 
-        res.json({
+        const provider = school.voiceProvider || 'elevenlabs';
+
+        const baseResponse = {
             schoolId: school._id.toString(),
             schoolName: school.name,
             script: school.script || "Hi, thanks for calling our school, this is Nora, a virtual assistant.\nYou can speak in English or Spanish — si prefiere, puede hablar en español. ¿Le puedo ayudar en algo? How can I help you today?",
@@ -67,7 +74,22 @@ router.get('/agent-config', async (req, res) => {
             language: school.language || 'EN',
             routingNumber: school.routingNumber || '',
             escalationNumber: school.escalationNumber || '',
-        });
+            voiceProvider: provider,
+        };
+
+        // Add provider-specific fields
+        if (provider === 'vapi') {
+            baseResponse.vapiAssistantId = school.vapiAssistantId || '';
+            baseResponse.systemPrompt = school.systemPrompt || '';
+            baseResponse.qaPairs = (school.qaPairs || []).map(p => ({
+                question: p.question || '',
+                answer: p.answer || ''
+            }));
+        } else {
+            baseResponse.elevenlabsAgentId = school.elevenlabsAgentId || '';
+        }
+
+        res.json(baseResponse);
     } catch (err) {
         console.error('Agent config error:', err);
         res.status(500).json({ error: 'Internal server error' });
@@ -275,7 +297,7 @@ router.post('/call-end', async (req, res) => {
                         </div>
                     ` : '<p style="margin-top: 20px; color: #64748b;">No tour was scheduled during this call.</p>'}
                     <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-                    <p style="font-size: 12px; color: #94a3b8;">This is an automated notification from your Enrollment AI Assistant at ${school.name || 'our school'}.</p>
+                    <p style="font-size: 12px; color: #94a3b8;">This is an automated notification from your Nest Ops Assistant at ${school.name || 'our school'}.</p>
                 </div>
             `;
             
@@ -299,6 +321,352 @@ router.post('/call-end', async (req, res) => {
     } catch (err) {
         console.error('Voice call-end error:', err);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// POST /api/voice/vapi-book — VAPI tool endpoint for booking appointments
+// Called by VAPI assistant when parent confirms all details.
+router.post('/vapi-book', async (req, res) => {
+    try {
+        const {
+            date, time, parent_name, parent_phone, parent_email,
+            child_name, child_age, reason, schoolId
+        } = req.body;
+
+        // Accept schoolId from body OR query param (VAPI tools can append to URL)
+        const effectiveSchoolId = schoolId || req.query.schoolId;
+
+        if (!effectiveSchoolId) {
+            return res.status(400).json({ error: 'schoolId is required' });
+        }
+
+        if (!date || !time || !parent_name) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields. Need date, time, and parent_name.'
+            });
+        }
+
+        // Parse local datetime
+        const localDateTime = new Date(`${date}T${time}:00`);
+        const { parseLocalDateTimeToUTC } = require('../utils/timezone');
+        const start = parseLocalDateTimeToUTC(
+            localDateTime.toISOString(), 'America/Chicago'
+        ) || localDateTime;
+
+        if (isNaN(start.getTime())) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid date or time format. Use YYYY-MM-DD for date and HH:MM for time.'
+            });
+        }
+
+        const end = new Date(start.getTime() + 30 * 60 * 1000);
+
+        // Check availability
+        const { available, error: slotError } = await isSlotAvailable(effectiveSchoolId, start, end);
+        if (!available) {
+            return res.status(409).json({
+                success: false,
+                error: slotError || 'That time slot is no longer available.'
+            });
+        }
+
+        // Create calendar event
+        const title = `School Tour – ${parent_name}`;
+        const description = [
+            `Tour for ${parent_name}`,
+            `Phone: ${parent_phone || 'N/A'}`,
+            `Email: ${parent_email || 'N/A'}`,
+            `Child: ${child_name || 'N/A'} (${child_age || 'N/A'})`,
+            `Reason: ${reason || 'Inquiry'}`
+        ].join('. ');
+
+        const calResult = await createCalendarEvent(effectiveSchoolId, {
+            title,
+            startDateTime: start,
+            endDateTime: end,
+            description,
+            parentEmail: parent_email || undefined,
+        });
+
+        // Create tour booking record
+        const tourBooking = await TourBooking.create({
+            schoolId: effectiveSchoolId,
+            parentName: parent_name,
+            phone: parent_phone || '',
+            email: parent_email || '',
+            childName: child_name || '',
+            childAge: child_age || '',
+            reason: reason || '',
+            scheduledAt: start,
+            calendarEventId: calResult.success ? calResult.eventId : '',
+            calendarProvider: calResult.success ? calResult.provider : '',
+            calendarEmail: calResult.success ? calResult.email : '',
+        });
+
+        // Trigger automation (follow-up emails)
+        if (parent_email || parent_phone) {
+            triggerAutomation(effectiveSchoolId, {
+                parentName: parent_name,
+                phone: parent_phone,
+                email: parent_email,
+                childAge: child_age,
+                reason: reason,
+            }).catch(err => console.error('[vapi-book] Automation error:', err));
+        }
+
+        // Send confirmation
+        if (parent_email) {
+            const { sendTourConfirmation } = require('../services/automation');
+            sendTourConfirmation(effectiveSchoolId, tourBooking).catch(err =>
+                console.error('[vapi-book] Confirmation error:', err)
+            );
+        }
+
+        console.log(`[vapi-book] Tour booked: ${parent_name} on ${date} at ${time} via VAPI`);
+        res.status(200).json({
+            success: true,
+            message: `Tour booked for ${parent_name} on ${date} at ${time}. A confirmation will be sent to ${parent_email || 'the phone number provided'}.`,
+            booking_id: tourBooking._id.toString(),
+            calendar_provider: calResult.provider || 'none',
+            calendar_event_created: calResult.success,
+        });
+
+    } catch (err) {
+        console.error('[vapi-book] Error:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Unable to complete booking. Please try again.'
+        });
+    }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/voice/book-meeting — AI Agent Tool Endpoint
+// ────────────────────────────────────────────────────────────────────────────
+// Books a meeting/tour on the school's Google AND/OR Outlook calendar.
+// Designed as a tool endpoint for ElevenLabs & VAPI voice agents.
+//
+// Body:
+//   schoolId       (required) — MongoDB school ID
+//   title          (required) — Meeting title, e.g. "School Tour – Jane Doe"
+//   invitees       (optional) — Array of email strings to send calendar invites to
+//   startDate      (required) — "YYYY-MM-DD"
+//   startTime      (required) — "HH:MM" (24-hour)
+//   timezone       (optional) — IANA timezone, defaults to "America/Chicago"
+//   durationMinutes(optional) — Default 30
+//   description    (optional) — Meeting body / notes
+//   parentName     (optional) — For TourBooking record
+//   parentPhone    (optional) — For TourBooking record
+//   childName      (optional) — For TourBooking record
+//   childAge       (optional) — For TourBooking record
+//
+// Response:
+//   { success, message, providers[], eventIds{}, startTime, endTime, bookingId }
+// ────────────────────────────────────────────────────────────────────────────
+router.post('/book-meeting', async (req, res) => {
+    try {
+        const {
+            schoolId,
+            title,
+            invitees,
+            startDate,
+            startTime,
+            timezone,
+            durationMinutes,
+            description,
+            parentName,
+            parentPhone,
+            childName,
+            childAge,
+        } = req.body;
+
+        // ── Validate required fields ──────────────────────────────────
+        if (!schoolId) {
+            return res.status(400).json({ success: false, error: 'schoolId is required.' });
+        }
+        if (!title) {
+            return res.status(400).json({ success: false, error: 'title is required. Provide a meeting title.' });
+        }
+        if (!startDate || !startTime) {
+            return res.status(400).json({
+                success: false,
+                error: 'startDate (YYYY-MM-DD) and startTime (HH:MM) are required.'
+            });
+        }
+
+        // Validate date format
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+            return res.status(400).json({ success: false, error: 'startDate must be YYYY-MM-DD format.' });
+        }
+        if (!/^\d{2}:\d{2}$/.test(startTime)) {
+            return res.status(400).json({ success: false, error: 'startTime must be HH:MM format (24-hour).' });
+        }
+
+        // ── Resolve school ────────────────────────────────────────────
+        const school = await School.findById(schoolId).select(
+            'name preferredCalendar address timezone'
+        ).lean();
+
+        if (!school) {
+            return res.status(404).json({ success: false, error: `School not found for ID: ${schoolId}` });
+        }
+
+        const tz = timezone || 'America/Chicago';
+        const duration = Math.min(Math.max(parseInt(durationMinutes, 10) || 30, 15), 120); // 15–120 min
+
+        // ── Parse start datetime in the given timezone ─────────────────
+        const { parseLocalDateTimeToUTC, formatInTimezone } = require('../utils/timezone');
+        const localDateTimeStr = `${startDate}T${startTime}:00`;
+        const localDate = new Date(localDateTimeStr);
+
+        if (isNaN(localDate.getTime())) {
+            return res.status(400).json({ success: false, error: 'Invalid date/time values.' });
+        }
+
+        const startUtc = parseLocalDateTimeToUTC(localDate.toISOString(), tz) || localDate;
+        const endUtc = new Date(startUtc.getTime() + duration * 60 * 1000);
+
+        console.log(`[book-meeting] schoolId=${schoolId} title="${title}"`);
+        console.log(`[book-meeting] local=${startDate} ${startTime} ${tz} → UTC start=${startUtc.toISOString()} end=${endUtc.toISOString()}`);
+        console.log(`[book-meeting] invitees=${(invitees || []).join(', ') || 'none'}`);
+
+        // ── Check for time conflicts ──────────────────────────────────
+        const { available, error: slotError } = await isSlotAvailable(schoolId, startUtc, endUtc);
+        if (!available) {
+            return res.status(409).json({
+                success: false,
+                error: slotError || 'This time slot conflicts with an existing booking.',
+                conflicting: true
+            });
+        }
+
+        // ── Create calendar event(s) ──────────────────────────────────
+        const inviteesList = Array.isArray(invitees) ? invitees : (invitees ? [invitees] : []);
+        const primaryInvitee = inviteesList[0] || null;
+
+        const fullDescription = description ||
+            `${title}\n` +
+            (parentName ? `Parent: ${parentName}\n` : '') +
+            (parentPhone ? `Phone: ${parentPhone}\n` : '') +
+            (childName ? `Child: ${childName} (${childAge || 'N/A'})\n` : '') +
+            `School: ${school.name}`;
+
+        // Build calendar event options
+        const calOpts = {
+            title,
+            startDateTime: startUtc,
+            endDateTime: endUtc,
+            description: fullDescription,
+            parentEmail: primaryInvitee,
+        };
+
+        // Fetch preferred calendar and connected integrations
+        const Integration = require('../models/Integration');
+        const preference = school.preferredCalendar || 'both';
+        const integrations = await Integration.find({
+            schoolId,
+            connected: true,
+            type: { $in: ['google', 'outlook'] }
+        }).lean();
+
+        console.log(`[book-meeting] School preference: ${preference}, connected integrations: ${integrations.map(i => i.type).join(', ') || 'none'}`);
+
+        // Use the unified createCalendarEvent which handles all providers
+        const calResult = await createCalendarEvent(schoolId, calOpts);
+
+        console.log(`[book-meeting] Calendar result:`, JSON.stringify(calResult));
+
+        // ── Create TourBooking record ──────────────────────────────────
+        const tourBooking = await TourBooking.create({
+            schoolId,
+            parentName: parentName || 'Guest',
+            phone: parentPhone || '',
+            email: primaryInvitee || '',
+            childName: childName || '',
+            childAge: childAge || '',
+            reason: 'AI Agent booking',
+            scheduledAt: startUtc,
+            calendarEventId: calResult.success ? calResult.eventId : '',
+            calendarProvider: calResult.success ? calResult.provider : '',
+            calendarEmail: calResult.success ? calResult.email : '',
+        });
+
+        console.log(`[book-meeting] TourBooking created: ${tourBooking._id}`);
+
+        // ── Send calendar invites to additional invitees ───────────────
+        if (calResult.success && inviteesList.length > 0) {
+            const { sendEmail } = require('../services/mailService');
+            const { generateICS } = require('../utils/ics');
+
+            for (const invitee of inviteesList) {
+                if (!invitee || invitee === primaryInvitee) continue; // primary already invited via calendar API
+
+                try {
+                    const icsContent = generateICS({
+                        title,
+                        start: startUtc,
+                        end: endUtc,
+                        description: fullDescription,
+                        location: school.address || '',
+                    });
+
+                    await sendEmail(schoolId, {
+                        to: invitee,
+                        subject: `Calendar Invite: ${title}`,
+                        text: `You've been invited to: ${title}\n\n` +
+                            `Date: ${startDate} at ${startTime} (${tz})\n` +
+                            `Location: ${school.address || school.name}\n\n` +
+                            `${fullDescription}`,
+                        attachments: [{ filename: 'invite.ics', content: icsContent }],
+                    });
+
+                    console.log(`[book-meeting] ICS invite sent to ${invitee}`);
+                } catch (inviteErr) {
+                    console.error(`[book-meeting] Failed to send invite to ${invitee}:`, inviteErr.message);
+                }
+            }
+        }
+
+        // ── Send confirmation email to primary invitee ─────────────────
+        if (primaryInvitee && calResult.success) {
+            const { sendTourConfirmation } = require('../services/automation');
+            sendTourConfirmation(schoolId, tourBooking).catch(err =>
+                console.error('[book-meeting] Confirmation error:', err.message)
+            );
+        }
+
+        // ── Build response ────────────────────────────────────────────
+        const startFormatted = formatInTimezone
+            ? formatInTimezone(startUtc, tz)
+            : startUtc.toISOString();
+        const endFormatted = formatInTimezone
+            ? formatInTimezone(endUtc, tz)
+            : endUtc.toISOString();
+
+        res.status(200).json({
+            success: calResult.success,
+            message: calResult.success
+                ? `Meeting "${title}" booked successfully on ${calResult.provider} calendar.`
+                : `Calendar booking failed: ${calResult.error}`,
+            providers: calResult.success ? [calResult.provider] : [],
+            eventIds: calResult.success ? { [calResult.provider]: calResult.eventId } : {},
+            startTime: startUtc.toISOString(),
+            endTime: endUtc.toISOString(),
+            startTimeLocal: startFormatted,
+            endTimeLocal: endFormatted,
+            timezone: tz,
+            bookingId: tourBooking._id.toString(),
+            inviteesNotified: inviteesList,
+        });
+
+    } catch (err) {
+        console.error('[book-meeting] Internal error:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error while booking the meeting. Please try again.'
+        });
     }
 });
 

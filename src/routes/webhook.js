@@ -15,7 +15,7 @@ const { generateICS } = require('../utils/ics');
 const { parseLocalDateTimeToUTC } = require('../utils/timezone');
 const { deductCallMinutes } = require('../services/billingService');
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = process.env.JWT_SECRET || 'childcare-enrollment-ai-secret-key-2024';
+const JWT_SECRET = process.env.JWT_SECRET || 'nest-ops-secret-key-2026';
 
 const router = express.Router();
 
@@ -589,7 +589,7 @@ async function sendEmailViaGmail(schoolId, to, subject, text) {
         const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
         // Use stored userEmail as "from" address, or fallback to tokens email
-        const fromEmail = userEmail || tokens.email || 'noreply@enrollmentai.com';
+        const fromEmail = userEmail || tokens.email || 'noreply@nestops.com';
 
         // Create email message in RFC 2822 format
         const message = [
@@ -766,7 +766,7 @@ ${tourNotes ? `- Notes: ${tourNotes}\n` : ''}
         emailBody += `You can view the full call details in your dashboard.
 
 Best regards,
-Childcare Enrollment AI Platform`;
+Nest Ops Platform`;
 
         // Send email using the school's preferred provider (Google/Outlook), with SMTP fallback.
         // Note: this replaces the previous hardcoded Gmail-only flow.

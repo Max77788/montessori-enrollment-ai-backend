@@ -29,6 +29,10 @@ const schoolSchema = new mongoose.Schema({
     adminEmail: { type: String, default: '' }, // Admin email for webhook notifications
     elevenlabsAgentId: { type: String, default: '' }, // ElevenLabs Agent ID for inbound call identification
     agentPhoneNumberId: { type: String, default: '' }, // Associated SIP trunk number ID
+    // Voice AI provider selection
+    voiceProvider: { type: String, enum: ['elevenlabs', 'vapi', ''], default: 'vapi' },
+    vapiAssistantId: { type: String, default: '' }, // VAPI assistant ID
+    vapiPhoneNumberId: { type: String, default: '' }, // VAPI phone number ID
     // Tour confirmation templates
     tourConfirmationEmailTemplate: { type: String, default: 'Dear {parent_name},\n\nYour tour at {school_name} has been scheduled for {tour_date}.\n\nLocation: {school_address}\n\nWe look forward to seeing you!\n\nWarm regards,\n{school_name}' },
     tourReminderSmsTemplate: { type: String, default: 'Hi {parent_name}, this is a reminder for your tour at {school_name} tomorrow, {tour_date}. See you then!' },
@@ -57,6 +61,11 @@ const schoolSchema = new mongoose.Schema({
     foundingPartner: { type: Boolean, default: false },
     onboardingFeePaid: { type: Boolean, default: false },
     lastBillingCyclePaymentAt: { type: Date, default: null },
+    // Auto top-up configuration
+    autoTopUpEnabled: { type: Boolean, default: false },
+    autoTopUpThreshold: { type: Number, default: 0 },    // Trigger when balance falls below this
+    autoTopUpAmountMinutes: { type: Number, default: 50 }, // How many minutes to add
+    autoTopUpFailedAt: { type: Date, default: null },      // Last failed auto top-up timestamp
 }, { timestamps: true });
 
 module.exports = mongoose.model('School', schoolSchema);

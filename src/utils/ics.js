@@ -22,7 +22,7 @@ function generateICS(opts) {
     const { title, start, end, description = '', location = '' } = opts;
     const startDate = start instanceof Date ? start : new Date(start);
     const endDate = end instanceof Date ? end : new Date(end);
-    const uid = `tour-${startDate.getTime()}-${Math.random().toString(36).slice(2, 10)}@enrollmentai`;
+    const uid = `tour-${startDate.getTime()}-${Math.random().toString(36).slice(2, 10)}@nestops`;
     const now = formatDateForICS(new Date());
     const dtstart = formatDateForICS(startDate);
     const dtend = formatDateForICS(endDate);
@@ -30,7 +30,7 @@ function generateICS(opts) {
     const lines = [
         'BEGIN:VCALENDAR',
         'VERSION:2.0',
-        'PRODID:-//EnrollmentAI//Tour Booking//EN',
+        'PRODID:-//NestOps//Tour Booking//EN',
         'CALSCALE:GREGORIAN',
         'METHOD:REQUEST',
         'BEGIN:VEVENT',
