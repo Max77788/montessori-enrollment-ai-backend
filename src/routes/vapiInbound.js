@@ -127,6 +127,7 @@ router.post('/assistant-request', async (req, res) => {
                         school_name: school.name,
                         backend_url: cleanBaseUrl,
                         knowledge_base: kb,
+                        customer_number: customerNumber || '',
                     }
                 }
             };
