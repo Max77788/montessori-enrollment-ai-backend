@@ -99,25 +99,66 @@ router.get('/agent-config', async (req, res) => {
 // GET /api/voice/availability - No auth. Agent calls to get free 30-min slots for a day (respects blocked times, no overlaps).
 // Query: schoolId=xxx&date=YYYY-MM-DD
 router.get('/availability', async (req, res) => {
+    const startTime = Date.now();
+    const { schoolId, date } = req.query;
+
+    console.log('══════════════════════════════════════════════════════');
+    console.log('[Availability] GET /api/voice/availability');
+    console.log('[Availability] Timestamp:', new Date().toISOString());
+    console.log('[Availability] Query params:', JSON.stringify(req.query));
+    console.log('[Availability] schoolId:', schoolId || 'MISSING');
+    console.log('[Availability] date:', date || 'MISSING');
+    console.log('[Availability] Headers:', JSON.stringify({ host: req.get('host'), origin: req.get('origin'), referer: req.get('referer'), 'user-agent': req.get('user-agent') }));
+
     try {
-        const { schoolId, date } = req.query;
         if (!schoolId || !date) {
+            console.log('[Availability] ❌ Missing required params — schoolId=' + !!schoolId + ' date=' + !!date);
+            console.log(`[Availability] Completed in ${Date.now() - startTime}ms`);
+            console.log('══════════════════════════════════════════════════════');
             return res.status(400).json({ error: 'schoolId and date (YYYY-MM-DD) are required' });
         }
-        const school = await School.findById(schoolId).select('businessHoursStart businessHoursEnd').lean();
+
+        // Validate date format
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            console.log('[Availability] ❌ Invalid date format:', date);
+            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
+        }
+
+        const school = await School.findById(schoolId).select('name businessHoursStart businessHoursEnd timezone').lean();
         if (!school) {
+            console.log('[Availability] ❌ School not found:', schoolId);
             return res.status(404).json({ error: 'School not found' });
         }
+
+        console.log('[Availability] School:', school.name);
+        console.log('[Availability] Business hours:', school.businessHoursStart || '09:00', '-', school.businessHoursEnd || '17:00');
+        console.log('[Availability] Timezone:', school.timezone || 'America/Chicago');
+
         const { freeSlots, error } = await getFreeSlots(schoolId, date, {
             start: school.businessHoursStart || '09:00',
             end: school.businessHoursEnd || '17:00',
         });
+
         if (error) {
+            console.log('[Availability] ❌ Error:', error);
+            console.log(`[Availability] Completed in ${Date.now() - startTime}ms`);
+            console.log('══════════════════════════════════════════════════════');
             return res.status(400).json({ error });
         }
+
+        console.log('[Availability] ✅ Free slots found:', freeSlots.length);
+        freeSlots.forEach((s, i) => {
+            console.log(`[Availability]   Slot ${i + 1}: ${s.start} → ${s.end}`);
+        });
+
+        console.log(`[Availability] Completed in ${Date.now() - startTime}ms`);
+        console.log('══════════════════════════════════════════════════════');
         res.json({ date, freeSlots });
+
     } catch (err) {
-        console.error('Availability error:', err);
+        console.error('[Availability] ❌ Exception after', Date.now() - startTime, 'ms:', err.message);
+        console.error('[Availability] Stack:', err.stack?.split('\n').slice(0, 4).join('\n'));
+        console.log('══════════════════════════════════════════════════════');
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -466,30 +507,45 @@ router.post('/vapi-book', async (req, res) => {
 //   { success, message, providers[], eventIds{}, startTime, endTime, bookingId }
 // ────────────────────────────────────────────────────────────────────────────
 router.post('/book-meeting', async (req, res) => {
-    try {
-        const {
-            schoolId,
-            title,
-            invitees,
-            startDate,
-            startTime,
-            timezone,
-            durationMinutes,
-            description,
-            parentName,
-            parentPhone,
-            childName,
-            childAge,
-        } = req.body;
+    const reqStartTime = Date.now();
 
+    const {
+        schoolId,
+        title,
+        invitees,
+        startDate,
+        startTime,
+        timezone,
+        durationMinutes,
+        description,
+        parentName,
+        parentPhone,
+        childName,
+        childAge,
+    } = req.body;
+
+    console.log('══════════════════════════════════════════════════════');
+    console.log('[BookMeeting] POST /api/voice/book-meeting');
+    console.log('[BookMeeting] Timestamp:', new Date().toISOString());
+    console.log('[BookMeeting] Body:', JSON.stringify({
+        schoolId, title, invitees, startDate, startTime, timezone, durationMinutes,
+        parentName, parentPhone, childName, childAge,
+        description: description ? description.slice(0, 100) + '...' : 'N/A'
+    }));
+    console.log('[BookMeeting] Headers:', JSON.stringify({ host: req.get('host'), origin: req.get('origin'), 'user-agent': req.get('user-agent') }));
+
+    try {
         // ── Validate required fields ──────────────────────────────────
         if (!schoolId) {
+            console.log('[BookMeeting] ❌ Missing schoolId');
             return res.status(400).json({ success: false, error: 'schoolId is required.' });
         }
         if (!title) {
+            console.log('[BookMeeting] ❌ Missing title');
             return res.status(400).json({ success: false, error: 'title is required. Provide a meeting title.' });
         }
         if (!startDate || !startTime) {
+            console.log('[BookMeeting] ❌ Missing startDate or startTime');
             return res.status(400).json({
                 success: false,
                 error: 'startDate (YYYY-MM-DD) and startTime (HH:MM) are required.'
@@ -645,6 +701,17 @@ router.post('/book-meeting', async (req, res) => {
             ? formatInTimezone(endUtc, tz)
             : endUtc.toISOString();
 
+        console.log('[BookMeeting] ✅ Response:', JSON.stringify({
+            success: calResult.success,
+            provider: calResult.provider,
+            eventId: calResult.eventId,
+            bookingId: tourBooking._id.toString(),
+            startUtc: startUtc.toISOString(),
+            local: `${startDate} ${startTime} ${tz}`,
+        }));
+        console.log(`[BookMeeting] Completed in ${Date.now() - reqStartTime}ms`);
+        console.log('══════════════════════════════════════════════════════');
+
         res.status(200).json({
             success: calResult.success,
             message: calResult.success
@@ -662,7 +729,9 @@ router.post('/book-meeting', async (req, res) => {
         });
 
     } catch (err) {
-        console.error('[book-meeting] Internal error:', err);
+        console.error('[BookMeeting] ❌ Exception after', Date.now() - reqStartTime, 'ms:', err.message);
+        console.error('[BookMeeting] Stack:', err.stack?.split('\n').slice(0, 5).join('\n'));
+        console.log('══════════════════════════════════════════════════════');
         res.status(500).json({
             success: false,
             error: 'Internal server error while booking the meeting. Please try again.'
