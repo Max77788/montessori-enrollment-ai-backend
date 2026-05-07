@@ -7,6 +7,21 @@ const { createMsalCachePlugin } = require('../utils/msalTokenCache');
 
 const router = express.Router();
 
+/**
+ * Resolve the frontend URL dynamically.
+ * Priority: FRONTEND_URL env → FORM_BASE_URL env → Referer/origin from request → localhost fallback
+ */
+function getFrontendUrl(req) {
+    if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL;
+    if (process.env.FORM_BASE_URL) return process.env.FORM_BASE_URL;
+    // Try to derive from the referer/origin header
+    const referer = req.get('Referer') || req.get('Origin') || '';
+    if (referer && referer.includes('vercel.app')) {
+        return referer.replace(/\/$/, '').replace(/\/school\/integrations.*/, '');
+    }
+    return 'http://localhost:5173';
+}
+
 // ── Google OAuth Configuration ──
 const googleConfig = {
     clientId: process.env.GOOGLE_CLIENT_ID,
@@ -146,7 +161,7 @@ router.get('/google/callback', async (req, res) => {
             { upsert: true }
         );
 
-        res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?success=google`);
+        res.redirect(`${getFrontendUrl(req)}/school/integrations?success=google`);
     } catch (err) {
         console.error('Google Callback Error:', err.message);
 
@@ -159,7 +174,7 @@ router.get('/google/callback', async (req, res) => {
             errorCode = 'google_expired';
         }
 
-        res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?error=${errorCode}`);
+        res.redirect(`${getFrontendUrl(req)}/school/integrations?error=${errorCode}`);
     }
 });
 
@@ -168,10 +183,10 @@ router.get('/outlook/callback', async (req, res) => {
     const { code, state, error, error_description } = req.query;
     if (error) {
         console.error('Outlook OAuth error:', error, error_description);
-        return res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?error=outlook`);
+        return res.redirect(`${getFrontendUrl(req)}/school/integrations?error=outlook`);
     }
     if (!code || !state) {
-        return res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?error=outlook`);
+        return res.redirect(`${getFrontendUrl(req)}/school/integrations?error=outlook`);
     }
 
     try {
@@ -207,10 +222,10 @@ router.get('/outlook/callback', async (req, res) => {
         // during the acquireTokenByCode call. Using $set above preserved it.
         console.log(`[Integrations] Outlook connected and config persisted for school: ${schoolId}`);
 
-        res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?success=outlook`);
+        res.redirect(`${getFrontendUrl(req)}/school/integrations?success=outlook`);
     } catch (err) {
         console.error('Outlook Callback Error:', err);
-        res.redirect(`${process.env.FRONTEND_URL || process.env.FORM_BASE_URL || 'http://localhost:5173'}/school/integrations?error=outlook`);
+        res.redirect(`${getFrontendUrl(req)}/school/integrations?error=outlook`);
     }
 });
 
