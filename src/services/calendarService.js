@@ -636,7 +636,7 @@ async function refreshOutlookToken(integration) {
         // Step 4: Attempt silent token acquisition with comprehensive error handling
         const silentRequest = {
             account: cachedAccount,
-            scopes: ['user.read', 'calendars.readwrite', 'mail.send', 'offline_access'],
+            scopes: ['user.read', 'calendars.readwrite', 'offline_access'],
             forceRefresh: true, // Force refresh to get fresh token
         };
 

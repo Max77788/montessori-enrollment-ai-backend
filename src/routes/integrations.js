@@ -47,7 +47,6 @@ function getGoogleAuthUrl(schoolId) {
         scope: [
             'https://www.googleapis.com/auth/calendar.events',
             'https://www.googleapis.com/auth/userinfo.email',
-            'https://www.googleapis.com/auth/gmail.send', // Gmail API scope for sending emails
         ],
         state: schoolId.toString(),
         prompt: 'consent select_account',
@@ -91,7 +90,7 @@ async function getOutlookAuthUrl(schoolId) {
     if (!schoolPca) return null;
 
     const authCodeUrlParameters = {
-        scopes: ['user.read', 'calendars.readwrite', 'mail.send', 'offline_access'],
+        scopes: ['user.read', 'calendars.readwrite', 'offline_access'],
         redirectUri: process.env.OUTLOOK_REDIRECT_URI,
         state: schoolId.toString(),
         prompt: 'select_account',
@@ -198,7 +197,7 @@ router.get('/outlook/callback', async (req, res) => {
         const tokenRequest = {
             code,
             redirectUri: process.env.OUTLOOK_REDIRECT_URI,
-            scopes: ['user.read', 'calendars.readwrite', 'mail.send', 'offline_access'],
+            scopes: ['user.read', 'calendars.readwrite', 'offline_access'],
         };
         const response = await schoolPca.acquireTokenByCode(tokenRequest);
 

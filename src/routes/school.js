@@ -449,8 +449,8 @@ router.get('/dashboard', async (req, res) => {
                 .limit(500)
                 .lean(),
             TourBooking.find({ schoolId })
-                .select('phone parentName childName')
-                .sort({ createdAt: 1 })
+                .select('phone parentName childName scheduledAt')
+                .sort({ scheduledAt: -1 })
                 .lean(),
         ]);
 
@@ -1418,8 +1418,10 @@ router.get('/call-logs', async (req, res) => {
                 timestamp: t.time_in_call_secs ? new Date(wh.received_at.getTime() + t.time_in_call_secs * 1000) : wh.received_at
             })) : [];
 
-            // Extract VAPI structured data
-            const structured = wh.metadata?.vapi_structured_data || null;
+            // Extract & normalize VAPI structured data (VAPI field names → frontend field names)
+            const raw = wh.metadata?.vapi_structured_data || {};
+            const cn = raw.child_name;
+            const ca = raw.child_age;
             const phoneCall = wh.metadata?.phone_call || {};
             const vapiMeta = wh.metadata?.vapi_metadata || wh.metadata?.vapi || {};
 
@@ -1433,23 +1435,23 @@ router.get('/call-logs', async (req, res) => {
                     || `${backendUrl}/api/school/calls/${wh.conversation_id}/audio?token=${userToken}`,
                 duration: getCallDurationSeconds(wh),
                 createdAt: wh.received_at,
-                // VAPI structured data
-                call_state: structured?.call_state || (wh.tour_booking_detected ? 'complete' : 'unknown'),
-                parent_name: structured?.parent_name || null,
-                parent_phone: structured?.parent_phone || null,
-                parent_email: structured?.parent_email || null,
-                child_name: structured?.child_name || null,
-                child_age: structured?.child_age || null,
-                tour_booked: structured?.tour_booked || wh.tour_booking_detected || false,
-                tour_date: structured?.tour_date || (wh.tour_booking_date ? new Date(wh.tour_booking_date).toISOString().slice(0, 10) : null),
-                tour_time: structured?.tour_time || null,
-                questions_asked: structured?.questions_asked || [],
-                topics_of_interest: structured?.topics_of_interest || [],
-                enrollment_urgency: structured?.enrollment_urgency || 'unknown',
-                language_spoken: structured?.language_spoken || 'English',
-                one_pager: structured?.one_pager || null,
-                email_subject: structured?.email?.subject || '',
-                email_body: structured?.email?.body || '',
+                // VAPI structured data (normalized)
+                call_state: raw.call_state || ({ tour_booked: 'complete', follow_up_needed: 'complete', incomplete: 'partial' })[raw.call_outcome] || (wh.tour_booking_detected ? 'complete' : 'unknown'),
+                parent_name: raw.parent_name || null,
+                parent_phone: raw.parent_phone || null,
+                parent_email: raw.parent_email || null,
+                child_name: cn ? (Array.isArray(cn) ? cn : [cn]) : null,
+                child_age: ca ? (Array.isArray(ca) ? ca : [ca]) : null,
+                tour_booked: !!raw.tour_booked || wh.tour_booking_detected || false,
+                tour_date: raw.tour_date || (wh.tour_booking_date ? new Date(wh.tour_booking_date).toISOString().slice(0, 10) : null),
+                tour_time: raw.tour_time || null,
+                questions_asked: raw.questions_asked || [],
+                topics_of_interest: raw.topics_of_interest || [],
+                enrollment_urgency: raw.enrollment_urgency || raw.enrollment_timeframe || 'unknown',
+                language_spoken: raw.language_spoken || 'English',
+                one_pager: raw.one_pager || raw.notes || null,
+                email_subject: raw.email?.subject || '',
+                email_body: raw.email?.body || '',
                 agent_name: wh.agent_name || 'Nora',
                 conversation_id: wh.conversation_id,
                 received_at: wh.received_at,
@@ -1750,6 +1752,7 @@ router.get('/settings', async (req, res) => {
             humanTransferPhoneNumber: school.humanTransferPhoneNumber || '',
             tourConfirmationEmailTemplate: school.tourConfirmationEmailTemplate || '',
             tourReminderSmsTemplate: school.tourReminderSmsTemplate || '',
+            tourBookingLink: school.tourBookingLink || '',
             autoTopUpEnabled: school.autoTopUpEnabled || false,
             autoTopUpThreshold: school.autoTopUpThreshold || 0,
             autoTopUpAmountMinutes: school.autoTopUpAmountMinutes || 50,
@@ -1789,7 +1792,7 @@ router.put('/settings', async (req, res) => {
             tourConfirmationEmailTemplate, tourReminderSmsTemplate,
             enableHumanTransfer, humanTransferCondition, humanTransferPhoneNumber,
             autoTopUpEnabled, autoTopUpThreshold, autoTopUpAmountMinutes,
-            voiceProvider, vapiAssistantId
+            voiceProvider, vapiAssistantId, tourBookingLink
         } = req.body;
 
         // Capture old values BEFORE overwriting (for change detection)
@@ -1852,6 +1855,7 @@ router.put('/settings', async (req, res) => {
         }
         if (tourConfirmationEmailTemplate !== undefined) school.tourConfirmationEmailTemplate = tourConfirmationEmailTemplate;
         if (tourReminderSmsTemplate !== undefined) school.tourReminderSmsTemplate = tourReminderSmsTemplate;
+        if (tourBookingLink !== undefined) school.tourBookingLink = tourBookingLink;
 
         // Validate using the latest values (after applying request body fields).
         if (school.enableHumanTransfer && (!school.humanTransferCondition || !school.humanTransferPhoneNumber)) {
@@ -2576,8 +2580,40 @@ router.get('/recent-calls', async (req, res) => {
             .limit(20)
             .lean();
 
+        // Normalize VAPI structured data (VAPI field names → frontend field names)
+        const normalizeStructured = (s) => {
+            if (!s || typeof s !== 'object') return {};
+            // child_name/child_age: VAPI sends strings, frontend expects arrays
+            const cn = s.child_name;
+            const ca = s.child_age;
+            // Map VAPI call_outcome to internal call_state
+            const outcomeToState = {
+                tour_booked: 'complete',
+                follow_up_needed: 'complete',
+                incomplete: 'partial',
+            };
+            return {
+                parent_name: s.parent_name || null,
+                parent_phone: s.parent_phone || null,
+                parent_email: s.parent_email || null,
+                child_name: cn ? (Array.isArray(cn) ? cn : [cn]) : null,
+                child_age: ca ? (Array.isArray(ca) ? ca : [ca]) : null,
+                tour_booked: !!s.tour_booked,
+                tour_date: s.tour_date || null,
+                tour_time: s.tour_time || null,
+                call_state: s.call_state || outcomeToState[s.call_outcome] || 'unknown',
+                questions_asked: s.questions_asked || [],
+                topics_of_interest: s.topics_of_interest || [],
+                enrollment_urgency: s.enrollment_urgency || s.enrollment_timeframe || 'unknown',
+                language_spoken: s.language_spoken || 'English',
+                one_pager: s.one_pager || s.notes || null,
+                email_subject: s.email?.subject || '',
+                email_body: s.email?.body || '',
+            };
+        };
+
         const formatted = recentCalls.map(call => {
-            const structured = call.metadata?.vapi_structured_data || null;
+            const structured = normalizeStructured(call.metadata?.vapi_structured_data);
             const phoneCall = call.metadata?.phone_call || {};
 
             return {
@@ -2589,25 +2625,8 @@ router.get('/recent-calls', async (req, res) => {
                 caller_number: phoneCall.from_number || '',
                 called_number: phoneCall.to_number || '',
                 summary: call.summary || '',
-                // VAPI structured data
-                call_state: structured?.call_state || 'unknown',
-                parent_name: structured?.parent_name || null,
-                parent_phone: structured?.parent_phone || null,
-                parent_email: structured?.parent_email || null,
-                child_name: structured?.child_name || null,
-                child_age: structured?.child_age || null,
-                tour_booked: structured?.tour_booked || false,
-                tour_date: structured?.tour_date || null,
-                tour_time: structured?.tour_time || null,
-                questions_asked: structured?.questions_asked || [],
-                topics_of_interest: structured?.topics_of_interest || [],
-                enrollment_urgency: structured?.enrollment_urgency || 'unknown',
-                language_spoken: structured?.language_spoken || 'English',
-                // One-pager
-                one_pager: structured?.one_pager || null,
-                // Email
-                email_subject: structured?.email?.subject || '',
-                email_body: structured?.email?.body || '',
+                // VAPI structured data (normalized)
+                ...structured,
             };
         });
 

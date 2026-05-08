@@ -290,7 +290,8 @@ async function processEndOfCallReport(payload) {
     const messages = message.artifact?.messages || [];
 
     // Build structured transcript matching ElevenLabs format
-    const transcriptArray = messages.map(m => ({
+    // Skip the first message (system prompt / greeting template)
+    const transcriptArray = messages.slice(1).map(m => ({
         role: m.role === 'assistant' ? 'bot' : 'user',
         message: m.message || m.content || '',
         time: m.time || 0,

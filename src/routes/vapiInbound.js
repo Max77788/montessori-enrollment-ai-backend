@@ -117,11 +117,13 @@ router.post('/assistant-request', async (req, res) => {
             const asstId = school.vapiAssistantId || DEFAULT_ASSISTANT_ID;
             const cleanBaseUrl = baseDomain.replace(/\/+$/, ''); // strip trailing slash
             const calendarProvider = school.preferredCalendar || 'google';
+            const tourBookingLink = school.tourBookingLink || '';
 
             console.log('[VAPI →] Using assistantId:', asstId, school.vapiAssistantId ? '(from school)' : '(DEFAULT fallback)');
             console.log('[VAPI →] Calendar:', calendarProvider);
+            if (tourBookingLink) console.log('[VAPI →] Tour booking link:', tourBookingLink);
 
-            return {
+            const response = {
                 assistantId: asstId,
                 assistantOverrides: {
                     variableValues: {
@@ -134,9 +136,58 @@ router.post('/assistant-request', async (req, res) => {
                         business_hours_start: school.businessHoursStart || '09:00',
                         business_hours_end: school.businessHoursEnd || '17:00',
                         school_address: school.address || '',
+                        tour_booking_link: tourBookingLink,
                     }
                 }
             };
+
+            // Build tools array
+            const tools = [];
+
+            // SMS tool — send tour booking link to the caller
+            const smsFromNumber = school.aiNumber || calledNumber || '';
+            if (customerNumber && smsFromNumber) {
+                tools.push({
+                    type: 'sms',
+                    function: {
+                        name: 'send_tour_link',
+                        description: 'Sends the tour booking link to the caller via SMS. Use {{tour_booking_link}} in the message content.'
+                    },
+                    sms: {
+                        metadata: {
+                            from: smsFromNumber,
+                            to: customerNumber,
+                        }
+                    }
+                });
+                console.log('[VAPI →] SMS tool added — from:', smsFromNumber, 'to:', customerNumber);
+            }
+
+            // Transfer call tool if the school has a fallback/transfer phone number
+            const transferNumber = school.humanTransferPhoneNumber || school.escalationNumber || '';
+            if (transferNumber) {
+                tools.push({
+                    type: 'transferCall',
+                    function: {
+                        name: 'transfer_call_to_school',
+                        description: 'Transfers the call to the school front desk'
+                    },
+                    destinations: [
+                        {
+                            type: 'number',
+                            number: transferNumber,
+                            message: 'Please hold while I connect you to the school.'
+                        }
+                    ]
+                });
+                console.log('[VAPI →] Transfer tool added — number:', transferNumber);
+            }
+
+            if (tools.length > 0) {
+                response.assistantOverrides.tools = tools;
+            }
+
+            return response;
         }
 
         // ── Find school by VAPI phone number ID or phone number ──────
@@ -149,7 +200,7 @@ router.post('/assistant-request', async (req, res) => {
             const phoneDoc = await PhoneNumber.findOne({ vapiPhoneId: vapiPhoneId }).lean();
             if (phoneDoc && phoneDoc.schoolId) {
                 school = await School.findById(phoneDoc.schoolId)
-                    .select('vapiAssistantId name _id qaPairs aiNumber preferredCalendar businessHoursStart businessHoursEnd address')
+                    .select('vapiAssistantId name _id qaPairs aiNumber preferredCalendar businessHoursStart businessHoursEnd address humanTransferPhoneNumber escalationNumber tourBookingLink')
                     .lean();
                 console.log(`[VAPI →] Found by VAPI phone ID: "${school?.name}" (phone: ${phoneDoc.phone_number})`);
             }
@@ -161,7 +212,7 @@ router.post('/assistant-request', async (req, res) => {
             console.log('[VAPI →] Normalized called number:', normalizedCalled);
 
             const schools = await School.find({ status: 'active' })
-                .select('aiNumber name vapiAssistantId _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address')
+                .select('aiNumber name vapiAssistantId _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address humanTransferPhoneNumber escalationNumber tourBookingLink')
                 .lean();
 
             console.log(`[VAPI →] Active schools: ${schools.length}`);
@@ -178,7 +229,7 @@ router.post('/assistant-request', async (req, res) => {
         if (!school) {
             console.warn('[VAPI →] ⚠️ No school found — using first active school as fallback');
             school = await School.findOne({ status: 'active' })
-                .select('vapiAssistantId name _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address')
+                .select('vapiAssistantId name _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address humanTransferPhoneNumber escalationNumber')
                 .lean();
 
             if (!school) {
@@ -260,7 +311,8 @@ async function processEndOfCallReport(payload, req) {
     const transcriptText = message.artifact?.transcript || '';
     const recordingUrl = message.artifact?.recordingUrl || '';
 
-    const transcriptArray = messages.map(m => ({
+    // Skip the first message (system prompt / greeting template)
+    const transcriptArray = messages.slice(1).map(m => ({
         role: m.role === 'assistant' ? 'bot' : 'user',
         message: m.message || m.content || '',
         time: m.time || 0,

@@ -38,11 +38,12 @@ function createGoogleOAuthClient() {
 
 /**
  * Sends an email using the best available method for the school.
- * Priorities: 
- * 1. Gmail API (if Google connected)
- * 2. Outlook/Graph API (if Outlook connected)
- * 3. Fallback to System SMTP
- * 
+ * Priorities:
+ * 1. Resend API (if RESEND_API_KEY is configured)
+ * 2. Gmail API (if Google connected)
+ * 3. Outlook/Graph API (if Outlook connected)
+ * 4. Fallback to System SMTP
+ *
  * @param {string} schoolId - MongoDB ObjectId
  * @param {object} opts - { to, subject, text, html, attachments?: [{ filename, content }] }
  */
@@ -71,8 +72,22 @@ async function sendEmail(schoolId, opts) {
         const preferred = school?.preferredEmailProvider || 'google';
         const recipientIsInternal = to && isSuspectInternalDomain(to);
 
-        // If recipient domain is suspect-internal and we'd normally use Outlook,
-        // force-skip Outlook to avoid Microsoft internal routing
+        // 1. Try Resend API first (primary delivery method)
+        if (process.env.RESEND_API_KEY) {
+            try {
+                const resendResult = await sendViaResend(opts);
+                if (resendResult && resendResult.success) {
+                    const elapsed = Date.now() - startTime;
+                    console.log(`[MailService] ✅ DELIVERED via Resend in ${elapsed}ms`);
+                    console.log(`[MailService] ==============================`);
+                    return { ...resendResult, delivered: true, deliveryMethod: 'resend', latencyMs: elapsed };
+                }
+            } catch (err) {
+                console.warn(`[MailService] Resend failed, falling back:`, err.message);
+            }
+        }
+
+        // 2. Gmail API / Outlook Graph API
         let providers;
         if (recipientIsInternal && preferred === 'outlook') {
             console.log(`[MailService] Skipping Outlook (suspect internal domain) → trying Gmail then SMTP`);
@@ -95,7 +110,6 @@ async function sendEmail(schoolId, opts) {
                 if (type === 'google' && integration.config?.tokens) {
                     result = await sendViaGmail(integration, opts);
                 } else if (type === 'outlook' && integration.config) {
-                    // Double-check: don't send to internal domain via Outlook
                     if (recipientIsInternal) {
                         console.warn(`[MailService] Skipping Outlook for internal domain ${to.split('@')[1]} — routing via next provider`);
                         continue;
@@ -271,6 +285,60 @@ async function sendViaOutlook(integration, { to, subject, text, html, attachment
 
     console.log('[MailService] Email sent via Outlook API');
     return { success: true, method: 'outlook', deliveryConfirmed: false };
+}
+
+/**
+ * Send email via Resend API.
+ * Resend is the primary delivery method — simple REST API, no OAuth needed.
+ * Docs: https://resend.com/docs/send-with-nextjs
+ */
+async function sendViaResend({ to, subject, text, html, attachments }) {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) throw new Error('RESEND_API_KEY not configured');
+
+    const from = process.env.RESEND_FROM
+        || process.env.MAIL_FROM
+        || process.env.EMAIL_FROM
+        || 'Nest Ops <noreply@nestops.com>';
+
+    const payload = {
+        from,
+        to: [to],
+        subject,
+        html: html || text?.replace(/\n/g, '<br>') || '',
+    };
+
+    if (text && html) {
+        payload.text = text;
+    }
+
+    if (attachments && attachments.length > 0) {
+        payload.attachments = attachments.map(att => ({
+            filename: att.filename || 'invite.ics',
+            content: typeof att.content === 'string'
+                ? Buffer.from(att.content).toString('base64')
+                : Buffer.from(att.content || '').toString('base64'),
+        }));
+    }
+
+    console.log(`[MailService:Resend] Sending to ${to} from ${from}`);
+
+    const res = await axios.post('https://api.resend.com/emails', payload, {
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+        },
+        validateStatus: null,
+    });
+
+    if (res.status === 200 || res.status === 201) {
+        console.log('[MailService:Resend] Email sent — ID:', res.data?.id);
+        return { success: true, method: 'resend', messageId: res.data?.id };
+    }
+
+    const errorMsg = res.data?.message || `HTTP ${res.status}`;
+    console.error('[MailService:Resend] Failed:', errorMsg);
+    throw new Error(`Resend API error: ${errorMsg}`);
 }
 
 async function sendViaSMTP({ to, subject, text, html, attachments }) {
