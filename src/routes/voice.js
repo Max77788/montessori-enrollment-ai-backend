@@ -150,14 +150,25 @@ router.all('/availability', async (req, res) => {
             return res.status(400).json({ error });
         }
 
-        console.log('[Availability] ✅ Free slots found:', freeSlots.length);
-        freeSlots.forEach((s, i) => {
-            console.log(`[Availability]   Slot ${i + 1}: ${s.start} → ${s.end}`);
+        // Format slots in the school's timezone
+        const tz = school.timezone || 'America/Chicago';
+        const { formatInTimezone } = require('../utils/timezone');
+
+        const formattedSlots = freeSlots.map(s => ({
+            start: formatInTimezone(new Date(s.start), tz),
+            end: formatInTimezone(new Date(s.end), tz),
+            startUtc: s.start,
+            endUtc: s.end,
+        }));
+
+        console.log('[Availability] ✅ Free slots found:', formattedSlots.length, `(timezone: ${tz})`);
+        formattedSlots.forEach((s, i) => {
+            console.log(`[Availability]   Slot ${i + 1}: ${s.start} → ${s.end} (${tz})`);
         });
 
         console.log(`[Availability] Completed in ${Date.now() - startTime}ms`);
         console.log('══════════════════════════════════════════════════════');
-        res.json({ date, freeSlots });
+        res.json({ date, timezone: tz, freeSlots: formattedSlots });
 
     } catch (err) {
         console.error('[Availability] ❌ Exception after', Date.now() - startTime, 'ms:', err.message);
