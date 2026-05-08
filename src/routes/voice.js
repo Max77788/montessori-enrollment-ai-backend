@@ -98,14 +98,17 @@ router.get('/agent-config', async (req, res) => {
 
 // GET /api/voice/availability - No auth. Agent calls to get free 30-min slots for a day (respects blocked times, no overlaps).
 // Query: schoolId=xxx&date=YYYY-MM-DD
-router.get('/availability', async (req, res) => {
+router.all('/availability', async (req, res) => {
     const startTime = Date.now();
-    const { schoolId, date } = req.query;
+    // VAPI tools may send params as query string OR request body for GET
+    const schoolId = req.query.schoolId || (req.body && req.body.schoolId) || '';
+    const date = req.query.date || (req.body && req.body.date) || '';
 
     console.log('══════════════════════════════════════════════════════');
     console.log('[Availability] GET /api/voice/availability');
     console.log('[Availability] Timestamp:', new Date().toISOString());
     console.log('[Availability] Query params:', JSON.stringify(req.query));
+    console.log('[Availability] Body:', JSON.stringify(req.body || {}).slice(0, 500));
     console.log('[Availability] schoolId:', schoolId || 'MISSING');
     console.log('[Availability] date:', date || 'MISSING');
     console.log('[Availability] Headers:', JSON.stringify({ host: req.get('host'), origin: req.get('origin'), referer: req.get('referer'), 'user-agent': req.get('user-agent') }));
