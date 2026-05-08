@@ -118,24 +118,43 @@ router.post('/assistant-request', async (req, res) => {
             const cleanBaseUrl = baseDomain.replace(/\/+$/, ''); // strip trailing slash
             const calendarProvider = school.preferredCalendar || 'google';
             const tourBookingLink = school.tourBookingLink || '';
+            const transferNumber = school.humanTransferPhoneNumber || school.escalationNumber || '';
 
             console.log('[VAPI →] Using assistantId:', asstId, school.vapiAssistantId ? '(from school)' : '(DEFAULT fallback)');
             console.log('[VAPI →] Calendar:', calendarProvider);
             if (tourBookingLink) console.log('[VAPI →] Tour booking link:', tourBookingLink);
 
-            // Log what tools the school has configured (for dashboard debugging)
-            // Note: tools cannot be passed dynamically via assistant-request — they must be
-            // configured on the VAPI assistant itself via dashboard or REST API.
-            const transferNumber = school.humanTransferPhoneNumber || school.escalationNumber || '';
-            const smsFromNumber = school.aiNumber || calledNumber || '';
-            if (customerNumber && smsFromNumber) {
-                console.log('[VAPI →] SMS would be available — from:', smsFromNumber, 'to:', customerNumber, '(configure send_tour_link tool on assistant)');
-            }
-            if (transferNumber) {
-                console.log('[VAPI →] Transfer would be available — number:', transferNumber, '(configure transfer_call_to_school tool on assistant)');
+            // Build dynamic tools passed via assistantOverrides.model.tools
+            const tools = [];
+
+            // SMS tool — send tour booking link to caller
+            if (tourBookingLink) {
+                tools.push({
+                    type: 'sendTextSMS',
+                    name: 'sendTourBookingLink',
+                    description: `Sends the tour booking link to the customer so they can book a tour online. The link is: ${tourBookingLink}`,
+                    body: `Here is the link to book your tour: {{tour_booking_link}}`,
+                    to: '{{customer.number}}',
+                });
+                console.log('[VAPI →] SMS tool added (sendTourBookingLink)');
             }
 
-            return {
+            // Transfer call tool
+            if (transferNumber) {
+                tools.push({
+                    type: 'transferCall',
+                    destinations: [
+                        {
+                            type: 'number',
+                            number: transferNumber,
+                            message: 'Please hold while I connect you to the school.',
+                        }
+                    ]
+                });
+                console.log('[VAPI →] Transfer tool added — number:', transferNumber);
+            }
+
+            const response = {
                 assistantId: asstId,
                 assistantOverrides: {
                     variableValues: {
@@ -149,10 +168,15 @@ router.post('/assistant-request', async (req, res) => {
                         business_hours_end: school.businessHoursEnd || '17:00',
                         school_address: school.address || '',
                         tour_booking_link: tourBookingLink,
-                        transfer_phone_number: transferNumber,
                     }
                 }
             };
+
+            if (tools.length > 0) {
+                response.assistantOverrides.model = { tools };
+            }
+
+            return response;
         }
 
         // ── Find school by VAPI phone number ID or phone number ──────
