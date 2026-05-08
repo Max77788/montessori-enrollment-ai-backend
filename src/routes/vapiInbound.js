@@ -317,10 +317,19 @@ async function processEndOfCallReport(payload, req) {
 
         // Use VAPI analysis if available
         if (message.analysis?.summary && schoolObjectId) {
-            await ElevenLabsWebhook.findByIdAndUpdate(webhookDoc._id, {
-                summary: message.analysis.summary,
+            // Store summary + full structured data from VAPI analysis
+            const updateData = {
+                summary: message.analysis.summary || '',
                 ai_processed: true,
-            });
+            };
+            if (message.analysis.structuredData) {
+                updateData['metadata.vapi_structured_data'] = message.analysis.structuredData;
+                console.log('[VAPI Webhook] Structured data stored:', JSON.stringify(message.analysis.structuredData).slice(0, 300));
+            }
+            if (message.analysis.successEvaluation) {
+                updateData['metadata.vapi_success_evaluation'] = message.analysis.successEvaluation;
+            }
+            await ElevenLabsWebhook.findByIdAndUpdate(webhookDoc._id, updateData);
         }
 
         // Create CallLog
