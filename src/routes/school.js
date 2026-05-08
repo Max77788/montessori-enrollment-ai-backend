@@ -1468,7 +1468,7 @@ router.get('/calls/:conversationId/audio', async (req, res) => {
         const audioWebhook = await ElevenLabsWebhook.findOne({
             conversation_id: conversationId,
             type: 'post_call_audio',
-            $or: [{ schoolId: schoolObjectId }, { schoolId: { $exists: false } }]
+            $or: [{ schoolId: schoolObjectId }, { schoolId: { $exists: false } }, { schoolId: null }]
         }).select('audio_base64 metadata agent_id').lean();
 
         if (audioWebhook && audioWebhook.audio_base64) {
@@ -1514,6 +1514,36 @@ router.get('/calls/:conversationId/audio', async (req, res) => {
                 console.warn(`[Audio Proxy] Failed for ${conversationId}: ${proxyErr.response?.status || proxyErr.message}`);
                 // If it's 404 and we're in dev/test, we could return silence too, 
                 // but let's only do it for test_conv_ prefix for now.
+            }
+        }
+
+        // ── Strategy 4: VAPI Recording URL (from end-of-call-report) ───────
+        const vapiWebhook = await ElevenLabsWebhook.findOne({
+            conversation_id: conversationId,
+            'metadata.vapi.recordingUrl': { $exists: true, $ne: '' },
+            $or: [{ schoolId: schoolObjectId }, { schoolId: { $exists: false } }, { schoolId: null }]
+        }).select('metadata.vapi.recordingUrl').lean();
+
+        if (vapiWebhook?.metadata?.vapi?.recordingUrl) {
+            const recordingUrl = vapiWebhook.metadata.vapi.recordingUrl;
+            console.log(`[Audio VAPI] Redirecting to: ${recordingUrl}`);
+            return res.redirect(recordingUrl);
+        }
+
+        // ── Strategy 5: Check CallLog recording_url ───────────────────────
+        const callLog = await CallLog.findOne({
+            schoolId: schoolObjectId,
+            $or: [
+                { recording_url: { $exists: true, $ne: '' } },
+                { recordingUrl: { $exists: true, $ne: '' } }
+            ]
+        }).sort({ createdAt: -1 }).lean();
+
+        if (callLog?.recordingUrl || callLog?.recording_url) {
+            const url = callLog.recordingUrl || callLog.recording_url;
+            if (url && url.startsWith('http')) {
+                console.log(`[Audio CallLog] Redirecting to: ${url}`);
+                return res.redirect(url);
             }
         }
 
