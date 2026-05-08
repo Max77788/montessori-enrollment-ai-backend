@@ -1393,11 +1393,14 @@ router.get('/call-logs', async (req, res) => {
         }
 
         const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
-        // ── 2. Fetch AI Logs (ElevenLabs Webhooks) ──
+        // ── 2. Fetch AI Logs (ElevenLabs Webhooks + VAPI) ──
+        // Match by schoolId OR by phone number (for VAPI webhooks with null schoolId)
         const webhooks = await ElevenLabsWebhook.find({
             type: 'post_call_transcription',
-            ai_processed: true,
-            schoolId: schoolObjectId
+            $or: [
+                { schoolId: schoolObjectId },
+                { schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.replace(/\D/g, '').slice(-10) } },
+            ]
         }).sort({ received_at: -1 }).limit(50).lean();
 
         const webhookSessions = webhooks.map(wh => {
@@ -2522,9 +2525,15 @@ router.get('/recent-calls', async (req, res) => {
 
         const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
 
+        const school = await School.findById(schoolId).select('aiNumber').lean();
+        const schoolPhoneDigits = (school?.aiNumber || '').replace(/\D/g, '').slice(-10);
+
         const recentCalls = await ElevenLabsWebhook.find({
-            schoolId: schoolObjectId,
             type: 'post_call_transcription',
+            $or: [
+                { schoolId: schoolObjectId },
+                ...(schoolPhoneDigits ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolPhoneDigits } }] : []),
+            ]
         })
             .select('conversation_id agent_name summary received_at metadata transcript')
             .sort({ received_at: -1 })
