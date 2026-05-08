@@ -356,20 +356,42 @@ async function createCalendarEvent(schoolId, opts) {
     }
 
     if (!integrations || integrations.length === 0) {
-        const allIntegrations = await Integration.find({
-            $or: [
-                { schoolId: schoolObjectId },
-                ...(typeof schoolId === 'string' ? [{ schoolId: schoolId }] : [])
-            ]
+        // Fallback: if preferred provider isn't connected, use ANY connected integration
+        const fallbackIntegrations = await Integration.find({
+            schoolId: schoolObjectId,
+            connected: true,
+            type: { $in: ['google', 'outlook'] }
         }).lean();
-        console.error(`[Calendar] ❌ NO CONNECTED INTEGRATION for preference=${preference}`);
-        console.error(`[Calendar] Total integrations for school: ${allIntegrations.length}`);
-        if (allIntegrations.length > 0) {
-            allIntegrations.forEach((int, idx) => {
-                console.error(`[Calendar]   ${idx + 1}: type=${int.type}, connected=${int.connected}`);
-            });
+
+        // Also try string schoolId
+        let allFallback = fallbackIntegrations;
+        if (allFallback.length === 0 && typeof schoolId === 'string') {
+            allFallback = await Integration.find({
+                schoolId: schoolId,
+                connected: true,
+                type: { $in: ['google', 'outlook'] }
+            }).lean();
         }
-        return { success: false, error: `Calendar provider (${preference}) not connected. Connect in Integrations settings.` };
+
+        if (allFallback.length > 0) {
+            console.warn(`[Calendar] ⚠️ Preferred provider (${preference}) not connected — falling back to: ${allFallback.map(i => i.type).join(', ')}`);
+            integrations = allFallback;
+        } else {
+            const allIntegrations = await Integration.find({
+                $or: [
+                    { schoolId: schoolObjectId },
+                    ...(typeof schoolId === 'string' ? [{ schoolId: schoolId }] : [])
+                ]
+            }).lean();
+            console.error(`[Calendar] ❌ NO CONNECTED INTEGRATION for preference=${preference}`);
+            console.error(`[Calendar] Total integrations for school: ${allIntegrations.length}`);
+            if (allIntegrations.length > 0) {
+                allIntegrations.forEach((int, idx) => {
+                    console.error(`[Calendar]   ${idx + 1}: type=${int.type}, connected=${int.connected}`);
+                });
+            }
+            return { success: false, error: `No connected calendar integration found. Connect one in Integrations settings.` };
+        }
     }
 
     let overallSuccess = false;
