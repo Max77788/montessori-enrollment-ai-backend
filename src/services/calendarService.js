@@ -452,8 +452,10 @@ async function createGoogleCalendarEvent(integration, { title, start, end, descr
         }
         const res = await calendar.events.insert(insertOptions);
         const eventId = res.data.id || '';
+        const htmlLink = res.data.htmlLink || '';
         console.log('[Calendar] Google event created:', eventId, parentEmail ? `(invite sent to ${parentEmail})` : '');
-        return { success: true, eventId, provider: 'google', email: tokens.email || integration.config?.userEmail };
+        console.log('[Calendar] View event:', htmlLink);
+        return { success: true, eventId, provider: 'google', email: tokens.email || integration.config?.userEmail, htmlLink };
     } catch (err) {
         console.error('[Calendar] Google creation error:', err.message);
         return { success: false, error: err.message || 'Failed to create Google Calendar event' };
@@ -521,8 +523,9 @@ async function createOutlookCalendarEvent(integration, { title, start, end, desc
         }
 
         const eventId = res.data.id || '';
-        console.log(`[Calendar:Outlook] ✅ Event created: id=${eventId}, webLink=${res.data.webLink || 'N/A'}`);
-        return { success: true, eventId, provider: 'outlook', email: integration.config?.account?.username };
+        const webLink = res.data.webLink || '';
+        console.log(`[Calendar:Outlook] ✅ Event created: id=${eventId}, webLink=${webLink || 'N/A'}`);
+        return { success: true, eventId, provider: 'outlook', email: integration.config?.account?.username, htmlLink: webLink };
     } catch (err) {
         const msg = err.response?.data?.error?.message || err.message;
         const code = err.response?.data?.error?.code || err.code || 'NETWORK_ERROR';
