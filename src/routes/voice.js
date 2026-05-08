@@ -114,22 +114,33 @@ router.all('/availability', async (req, res) => {
     console.log('[Availability] Headers:', JSON.stringify({ host: req.get('host'), origin: req.get('origin'), referer: req.get('referer'), 'user-agent': req.get('user-agent') }));
 
     try {
-        if (!schoolId || !date) {
-            console.log('[Availability] ❌ Missing required params — schoolId=' + !!schoolId + ' date=' + !!date);
-            console.log(`[Availability] Completed in ${Date.now() - startTime}ms`);
-            console.log('══════════════════════════════════════════════════════');
-            return res.status(400).json({ error: 'schoolId and date (YYYY-MM-DD) are required' });
+        // Fallback: if no schoolId/date, use first active school and tomorrow's date
+        const effectiveSchoolId = schoolId || (await (async () => {
+            const s = await School.findOne({ status: 'active' }).select('_id').lean();
+            console.log('[Availability] ⚠️ No schoolId provided — defaulting to:', s?._id || 'NONE');
+            return s?._id?.toString() || '';
+        })());
+
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const effectiveDate = date || tomorrow.toISOString().split('T')[0];
+
+        if (!effectiveSchoolId) {
+            console.log('[Availability] ❌ No schoolId and no active schools found');
+            return res.status(404).json({ error: 'No active schools found' });
         }
 
-        // Validate date format
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            console.log('[Availability] ❌ Invalid date format:', date);
+        console.log('[Availability] Effective schoolId:', effectiveSchoolId);
+        console.log('[Availability] Effective date:', effectiveDate);
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) {
+            console.log('[Availability] ❌ Invalid date format:', effectiveDate);
             return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
         }
 
-        const school = await School.findById(schoolId).select('name businessHoursStart businessHoursEnd timezone').lean();
+        const school = await School.findById(effectiveSchoolId).select('name businessHoursStart businessHoursEnd timezone').lean();
         if (!school) {
-            console.log('[Availability] ❌ School not found:', schoolId);
+            console.log('[Availability] ❌ School not found:', effectiveSchoolId);
             return res.status(404).json({ error: 'School not found' });
         }
 
@@ -137,7 +148,7 @@ router.all('/availability', async (req, res) => {
         console.log('[Availability] Business hours:', school.businessHoursStart || '09:00', '-', school.businessHoursEnd || '17:00');
         console.log('[Availability] Timezone:', school.timezone || 'America/Chicago');
 
-        const { freeSlots, error } = await getFreeSlots(schoolId, date, {
+        const { freeSlots, error } = await getFreeSlots(effectiveSchoolId, effectiveDate, {
             start: school.businessHoursStart || '09:00',
             end: school.businessHoursEnd || '17:00',
         });
@@ -156,7 +167,7 @@ router.all('/availability', async (req, res) => {
 
         console.log(`[Availability] Completed in ${Date.now() - startTime}ms`);
         console.log('══════════════════════════════════════════════════════');
-        res.json({ date, freeSlots });
+        res.json({ date: effectiveDate, freeSlots });
 
     } catch (err) {
         console.error('[Availability] ❌ Exception after', Date.now() - startTime, 'ms:', err.message);
