@@ -1393,14 +1393,22 @@ router.get('/call-logs', async (req, res) => {
         }
 
         const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
-        // ── 2. Fetch AI Logs (ElevenLabs Webhooks + VAPI) ──
-        // Match by schoolId OR by phone number (for VAPI webhooks with null schoolId)
+        // ── 2. Fetch AI Logs (VAPI Webhooks) ──
+        // VAPI webhooks have schoolId=null — match by schoolId OR phone number
+        const phoneDigits = schoolAiNumber || '';
+        const orConditions = [{ schoolId: schoolObjectId }];
+        // Only add phone-based matching if the school has a phone number
+        if (phoneDigits) {
+            // Match against last 10 digits (VAPI stores as +13363987499, +1 prefix possible)
+            const digits10 = phoneDigits.slice(-10);
+            orConditions.push({
+                schoolId: null,
+                'metadata.phone_call.to_number': { $regex: digits10 }
+            });
+        }
         const webhooks = await ElevenLabsWebhook.find({
             type: 'post_call_transcription',
-            $or: [
-                { schoolId: schoolObjectId },
-                { schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.replace(/\D/g, '').slice(-10) } },
-            ]
+            $or: orConditions,
         }).sort({ received_at: -1 }).limit(50).lean();
 
         const webhookSessions = webhooks.map(wh => {
