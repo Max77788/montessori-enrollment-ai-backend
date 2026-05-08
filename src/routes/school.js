@@ -1418,15 +1418,43 @@ router.get('/call-logs', async (req, res) => {
                 timestamp: t.time_in_call_secs ? new Date(wh.received_at.getTime() + t.time_in_call_secs * 1000) : wh.received_at
             })) : [];
 
+            // Extract VAPI structured data
+            const structured = wh.metadata?.vapi_structured_data || null;
+            const phoneCall = wh.metadata?.phone_call || {};
+            const vapiMeta = wh.metadata?.vapi_metadata || wh.metadata?.vapi || {};
+
             return {
                 id: wh._id.toString(),
                 sessionId: wh.conversation_id,
                 participantId: wh.metadata?.phone_call?.from_number || wh.tour_booking_extracted?.phone || 'Web Widget',
                 transcript,
                 summary: wh.summary || '',
-                recordingUrl: `${backendUrl}/api/school/calls/${wh.conversation_id}/audio?token=${userToken}`,
+                recordingUrl: vapiMeta.recordingUrl
+                    || `${backendUrl}/api/school/calls/${wh.conversation_id}/audio?token=${userToken}`,
                 duration: getCallDurationSeconds(wh),
-                createdAt: wh.received_at
+                createdAt: wh.received_at,
+                // VAPI structured data
+                call_state: structured?.call_state || (wh.tour_booking_detected ? 'complete' : 'unknown'),
+                parent_name: structured?.parent_name || null,
+                parent_phone: structured?.parent_phone || null,
+                parent_email: structured?.parent_email || null,
+                child_name: structured?.child_name || null,
+                child_age: structured?.child_age || null,
+                tour_booked: structured?.tour_booked || wh.tour_booking_detected || false,
+                tour_date: structured?.tour_date || (wh.tour_booking_date ? new Date(wh.tour_booking_date).toISOString().slice(0, 10) : null),
+                tour_time: structured?.tour_time || null,
+                questions_asked: structured?.questions_asked || [],
+                topics_of_interest: structured?.topics_of_interest || [],
+                enrollment_urgency: structured?.enrollment_urgency || 'unknown',
+                language_spoken: structured?.language_spoken || 'English',
+                one_pager: structured?.one_pager || null,
+                email_subject: structured?.email?.subject || '',
+                email_body: structured?.email?.body || '',
+                agent_name: wh.agent_name || 'Nora',
+                conversation_id: wh.conversation_id,
+                received_at: wh.received_at,
+                caller_number: phoneCall.from_number || '',
+                called_number: phoneCall.to_number || '',
             };
         });
 

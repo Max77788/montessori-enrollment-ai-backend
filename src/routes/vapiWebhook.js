@@ -355,12 +355,21 @@ async function processEndOfCallReport(payload) {
         // If VAPI already provided analysis/structuredData, use it
         if (message.analysis?.summary && schoolObjectId) {
             console.log('[VAPI EOCR] Using VAPI-provided analysis summary');
-            await ElevenLabsWebhook.findByIdAndUpdate(webhookDoc._id, {
+            const updateData = {
                 summary: message.analysis.summary,
                 tour_booking_detected: !!message.analysis.structuredData?.tour_booked,
                 tour_booking_date: message.analysis.structuredData?.tour_date || null,
                 ai_processed: true,
-            });
+            };
+            // Store full VAPI structured data for frontend display
+            if (message.analysis.structuredData) {
+                updateData['metadata.vapi_structured_data'] = message.analysis.structuredData;
+                console.log('[VAPI EOCR] Structured data stored:', JSON.stringify(message.analysis.structuredData).slice(0, 400));
+            }
+            if (message.analysis.successEvaluation) {
+                updateData['metadata.vapi_success_evaluation'] = message.analysis.successEvaluation;
+            }
+            await ElevenLabsWebhook.findByIdAndUpdate(webhookDoc._id, updateData);
         }
 
     } catch (err) {
