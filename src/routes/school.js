@@ -2484,5 +2484,91 @@ router.post('/test-followup', async (req, res) => {
     }
 });
 
+// GET /api/school/recent-calls — Returns latest webhooks with VAPI structured data
+router.get('/recent-calls', async (req, res) => {
+    try {
+        const schoolId = req.user.schoolId;
+        if (!schoolId) return res.status(400).json({ error: 'No school associated' });
+
+        const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
+
+        const recentCalls = await ElevenLabsWebhook.find({
+            schoolId: schoolObjectId,
+            type: 'post_call_transcription',
+        })
+            .select('conversation_id agent_name summary received_at metadata transcript')
+            .sort({ received_at: -1 })
+            .limit(20)
+            .lean();
+
+        const formatted = recentCalls.map(call => {
+            const structured = call.metadata?.vapi_structured_data || null;
+            const phoneCall = call.metadata?.phone_call || {};
+
+            return {
+                id: call._id.toString(),
+                conversation_id: call.conversation_id,
+                agent_name: call.agent_name || 'Nora',
+                received_at: call.received_at,
+                duration_seconds: phoneCall.call_duration_secs || 0,
+                caller_number: phoneCall.from_number || '',
+                called_number: phoneCall.to_number || '',
+                summary: call.summary || '',
+                // VAPI structured data
+                call_state: structured?.call_state || 'unknown',
+                parent_name: structured?.parent_name || null,
+                parent_phone: structured?.parent_phone || null,
+                parent_email: structured?.parent_email || null,
+                child_name: structured?.child_name || null,
+                child_age: structured?.child_age || null,
+                tour_booked: structured?.tour_booked || false,
+                tour_date: structured?.tour_date || null,
+                tour_time: structured?.tour_time || null,
+                questions_asked: structured?.questions_asked || [],
+                topics_of_interest: structured?.topics_of_interest || [],
+                enrollment_urgency: structured?.enrollment_urgency || 'unknown',
+                language_spoken: structured?.language_spoken || 'English',
+                // One-pager
+                one_pager: structured?.one_pager || null,
+                // Email
+                email_subject: structured?.email?.subject || '',
+                email_body: structured?.email?.body || '',
+            };
+        });
+
+        // Stats
+        const totalCalls = await ElevenLabsWebhook.countDocuments({
+            schoolId: schoolObjectId,
+            type: 'post_call_transcription',
+        });
+        const toursBooked = await TourBooking.countDocuments({ schoolId: schoolObjectId });
+        const recentTours = await TourBooking.find({ schoolId: schoolObjectId })
+            .sort({ scheduledAt: -1 })
+            .limit(5)
+            .lean();
+
+        res.json({
+            calls: formatted,
+            stats: {
+                total_calls: totalCalls,
+                tours_booked: toursBooked,
+                recent_tours: recentTours.map(t => ({
+                    id: t._id.toString(),
+                    parent_name: t.parentName,
+                    phone: t.phone,
+                    email: t.email,
+                    child_name: t.childName,
+                    child_age: t.childAge,
+                    scheduled_at: t.scheduledAt,
+                    calendar_provider: t.calendarProvider,
+                })),
+            }
+        });
+    } catch (err) {
+        console.error('[Recent Calls] Error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;
 
