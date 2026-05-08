@@ -42,10 +42,13 @@ app.use(cors({
         // Allow requests with no origin (server-to-server, curl, etc.)
         if (!origin) return callback(null, true);
         if (corsOrigins.includes(origin)) return callback(null, true);
-        // In production without explicit CORS_ORIGINS, allow any *.vercel.app or *.onrender.com
+        // In production without explicit CORS_ORIGINS, auto-allow known platforms
         if (!process.env.CORS_ORIGINS && (
             origin.endsWith('.vercel.app') ||
             origin.endsWith('.onrender.com') ||
+            origin.endsWith('.vapi.ai') ||
+            origin === 'https://api.vapi.ai' ||
+            origin === 'https://dashboard.vapi.ai' ||
             origin.includes('localhost')
         )) {
             return callback(null, true);
