@@ -123,7 +123,19 @@ router.post('/assistant-request', async (req, res) => {
             console.log('[VAPI →] Calendar:', calendarProvider);
             if (tourBookingLink) console.log('[VAPI →] Tour booking link:', tourBookingLink);
 
-            const response = {
+            // Log what tools the school has configured (for dashboard debugging)
+            // Note: tools cannot be passed dynamically via assistant-request — they must be
+            // configured on the VAPI assistant itself via dashboard or REST API.
+            const transferNumber = school.humanTransferPhoneNumber || school.escalationNumber || '';
+            const smsFromNumber = school.aiNumber || calledNumber || '';
+            if (customerNumber && smsFromNumber) {
+                console.log('[VAPI →] SMS would be available — from:', smsFromNumber, 'to:', customerNumber, '(configure send_tour_link tool on assistant)');
+            }
+            if (transferNumber) {
+                console.log('[VAPI →] Transfer would be available — number:', transferNumber, '(configure transfer_call_to_school tool on assistant)');
+            }
+
+            return {
                 assistantId: asstId,
                 assistantOverrides: {
                     variableValues: {
@@ -137,57 +149,10 @@ router.post('/assistant-request', async (req, res) => {
                         business_hours_end: school.businessHoursEnd || '17:00',
                         school_address: school.address || '',
                         tour_booking_link: tourBookingLink,
+                        transfer_phone_number: transferNumber,
                     }
                 }
             };
-
-            // Build tools array
-            const tools = [];
-
-            // SMS tool — send tour booking link to the caller
-            const smsFromNumber = school.aiNumber || calledNumber || '';
-            if (customerNumber && smsFromNumber) {
-                tools.push({
-                    type: 'sms',
-                    function: {
-                        name: 'send_tour_link',
-                        description: 'Sends the tour booking link to the caller via SMS. Use {{tour_booking_link}} in the message content.'
-                    },
-                    sms: {
-                        metadata: {
-                            from: smsFromNumber,
-                            to: customerNumber,
-                        }
-                    }
-                });
-                console.log('[VAPI →] SMS tool added — from:', smsFromNumber, 'to:', customerNumber);
-            }
-
-            // Transfer call tool if the school has a fallback/transfer phone number
-            const transferNumber = school.humanTransferPhoneNumber || school.escalationNumber || '';
-            if (transferNumber) {
-                tools.push({
-                    type: 'transferCall',
-                    function: {
-                        name: 'transfer_call_to_school',
-                        description: 'Transfers the call to the school front desk'
-                    },
-                    destinations: [
-                        {
-                            type: 'number',
-                            number: transferNumber,
-                            message: 'Please hold while I connect you to the school.'
-                        }
-                    ]
-                });
-                console.log('[VAPI →] Transfer tool added — number:', transferNumber);
-            }
-
-            if (tools.length > 0) {
-                response.assistantOverrides.tools = tools;
-            }
-
-            return response;
         }
 
         // ── Find school by VAPI phone number ID or phone number ──────
