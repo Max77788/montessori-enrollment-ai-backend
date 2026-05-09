@@ -173,7 +173,8 @@ router.post('/assistant-request', async (req, res) => {
             };
 
             if (tools.length > 0) {
-                response.assistantOverrides.model = { provider: 'openai', model: 'gpt-4o-mini', tools };
+                // VAPI API spec: tools are appended via "tools:append" field on assistantOverrides
+                response.assistantOverrides['tools:append'] = tools;
             }
 
             return response;
