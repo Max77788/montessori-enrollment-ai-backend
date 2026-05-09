@@ -130,7 +130,7 @@ router.post('/assistant-request', async (req, res) => {
             // SMS tool — send tour booking link to caller
             if (tourBookingLink) {
                 tools.push({
-                    type: 'sendTextSMS',
+                    type: 'sms',
                     name: 'sendTourBookingLink',
                     description: `Sends the tour booking link to the customer so they can book a tour online. The link is: ${tourBookingLink}`,
                     body: `Here is the link to book your tour: {{tour_booking_link}}`,
