@@ -704,13 +704,18 @@ router.get('/daily-insights', async (req, res) => {
         const userToken = req.headers.authorization?.split(' ')[1] || '';
         const backendUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
 
-        // Today boundaries (UTC)
-        const todayStart = new Date();
+        // Date selection: use query param `date` (YYYY-MM-DD) or default to today
+        const dateParam = req.query.date || '';
+        const targetDate = dateParam ? new Date(dateParam + 'T12:00:00.000Z') : new Date();
+        if (dateParam && isNaN(targetDate.getTime())) {
+            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
+        }
+        const todayStart = new Date(targetDate);
         todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date();
+        const todayEnd = new Date(targetDate);
         todayEnd.setHours(23, 59, 59, 999);
 
-        // Build "Common Parent Questions" from a broader window so it’s actually useful.
+        // Build "Common Parent Questions" from a broader window so it's actually useful.
         // 30 days tends to be stable enough to surface repeated topics like Fees/Cameras/After-school.
         const wordCloudStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
@@ -1107,7 +1112,7 @@ router.get('/daily-insights', async (req, res) => {
             };
         });
 
-        res.json({ needsAttention, todaysTours, wordCloud, todayCalls, callHistory });
+        res.json({ needsAttention, todaysTours, wordCloud, todayCalls, callHistory, targetDate: todayStart.toISOString() });
     } catch (err) {
         console.error('Daily insights error:', err);
         res.status(500).json({ error: 'Internal server error' });
