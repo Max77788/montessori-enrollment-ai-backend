@@ -723,7 +723,10 @@ router.get('/daily-insights', async (req, res) => {
         const todayWebhooks = await ElevenLabsWebhook.find({
             type: 'post_call_transcription',
             received_at: { $gte: todayStart, $lte: todayEnd },
-            schoolId: schoolObjectId
+            $or: [
+                { schoolId: schoolObjectId },
+                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
+            ]
         }).sort({ received_at: -1 }).lean();
 
         // Use cached word cloud from School model
@@ -864,7 +867,10 @@ router.get('/daily-insights', async (req, res) => {
         lookbackStart.setDate(lookbackStart.getDate() - 30);
         const allRelevantWebhooks = await ElevenLabsWebhook.find({
             type: 'post_call_transcription',
-            schoolId: schoolObjectId,
+            $or: [
+                { schoolId: schoolObjectId },
+                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
+            ],
             received_at: { $gte: lookbackStart }
         }).sort({ received_at: -1 }).limit(500).lean();
 
@@ -1137,8 +1143,11 @@ router.get('/action-needed', async (req, res) => {
             type: 'post_call_transcription',
             received_at: { $gte: thirtyDaysAgo },
             tour_booking_detected: { $ne: true },
-            actionTaken: { $ne: true }, // Only show items not yet marked as action taken
-            schoolId: schoolObjectId
+            actionTaken: { $ne: true },
+            $or: [
+                { schoolId: schoolObjectId },
+                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
+            ]
         }).sort({ received_at: -1 }).lean();
 
         // Extract comprehensive data from transcripts using single prompt
