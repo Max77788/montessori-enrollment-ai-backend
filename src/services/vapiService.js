@@ -468,6 +468,30 @@ async function linkPhoneToAssistant(phoneNumberId, assistantId) {
 // ── Call Management ───────────────────────────────────────────────────────
 
 /**
+ * Get a call by ID from VAPI API, including analysis.structuredData.
+ * @param {string} callId - VAPI call ID (conversation_id)
+ * @returns {Promise<object|null>} Full call object from VAPI
+ */
+async function getCall(callId) {
+    if (!VAPI_API_KEY || !callId) return null;
+
+    try {
+        const url = `${VAPI_BASE_URL}/call/${callId}`;
+        const response = await axios.get(url, {
+            headers: getHeaders(),
+            validateStatus: null,
+        });
+        if (response.status === 200) return response.data;
+        if (response.status === 404) return null;
+        console.error(`[VAPI] Get call failed (${response.status}):`, JSON.stringify(response.data).slice(0, 200));
+        return null;
+    } catch (err) {
+        console.error('[VAPI] Get call error:', err.message);
+        return null;
+    }
+}
+
+/**
  * Initiate an outbound call via VAPI.
  * @param {object} opts
  * @param {string} opts.assistantId - VAPI assistant ID
@@ -561,6 +585,7 @@ module.exports = {
     findPhoneNumber,
     linkPhoneToAssistant,
     createCall,
+    getCall,
     validateWebhookSignature,
     buildVapiTools,
     NORA_SYSTEM_PROMPT_VAPI,
