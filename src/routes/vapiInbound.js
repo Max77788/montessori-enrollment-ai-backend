@@ -173,7 +173,7 @@ router.post('/assistant-request', async (req, res) => {
             };
 
             if (tools.length > 0) {
-                response.assistantOverrides.model = { tools };
+                response.assistantOverrides.model = { provider: 'openai', tools };
             }
 
             return response;
