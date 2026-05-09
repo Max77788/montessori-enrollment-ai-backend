@@ -153,7 +153,7 @@ router.post('/assistant-request', async (req, res) => {
                         business_hours_start: school.businessHoursStart || '09:00',
                         business_hours_end: school.businessHoursEnd || '17:00',
                         school_address: school.address || '',
-                        tour_booking_link: tourBookingLink,
+                        tour_booking_link: tourBookingLink || '[not provided]',
                     }
                 }
             };
