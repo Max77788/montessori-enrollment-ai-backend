@@ -124,17 +124,13 @@ router.post('/assistant-request', async (req, res) => {
             console.log('[VAPI →] Calendar:', calendarProvider);
             if (tourBookingLink) console.log('[VAPI →] Tour booking link:', tourBookingLink);
 
-            // Build dynamic tools passed via assistantOverrides.model.tools
+            // Build dynamic tools passed via assistantOverrides["tools:append"]
             const tools = [];
 
             // SMS tool — send tour booking link to caller
             if (tourBookingLink) {
                 tools.push({
                     type: 'sms',
-                    name: 'sendTourBookingLink',
-                    description: `Sends the tour booking link to the customer so they can book a tour online. The link is: ${tourBookingLink}`,
-                    body: `Here is the link to book your tour: {{tour_booking_link}}`,
-                    to: '{{customer.number}}',
                 });
                 console.log('[VAPI →] SMS tool added (sendTourBookingLink)');
             }
