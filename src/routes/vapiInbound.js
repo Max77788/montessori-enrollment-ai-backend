@@ -128,17 +128,9 @@ router.post('/assistant-request', async (req, res) => {
             const tools = [];
 
             // SMS tool — send tour booking link to caller
-            const smsFromNumber = school.aiNumber || calledNumber || '';
-            if (tourBookingLink && smsFromNumber) {
-                tools.push({
-                    type: 'sms',
-                    sms: {
-                        metadata: {
-                            from: smsFromNumber,
-                        }
-                    }
-                });
-                console.log('[VAPI →] SMS tool added — from:', smsFromNumber);
+            if (tourBookingLink) {
+                tools.push({ type: 'sms' });
+                console.log('[VAPI →] SMS tool added');
             }
 
             // Transfer call tool
