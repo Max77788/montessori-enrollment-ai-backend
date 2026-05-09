@@ -1048,7 +1048,66 @@ router.get('/daily-insights', async (req, res) => {
                 : wh.received_at,
         }));
 
-        res.json({ needsAttention, todaysTours, wordCloud, todayCalls });
+        // ── 4. Call History: recent calls enriched with VAPI API structured data ──
+        const recentWebhooks = await ElevenLabsWebhook.find({
+            type: 'post_call_transcription',
+            $or: [
+                { schoolId: schoolObjectId },
+                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
+            ]
+        })
+            .select('conversation_id agent_name summary received_at metadata transcript tour_booking_detected')
+            .sort({ received_at: -1 })
+            .limit(20)
+            .lean();
+
+        const { getCall } = require('../services/vapiService');
+        const vapiEnrichments = await Promise.all(
+            recentWebhooks.map(wh =>
+                wh.conversation_id
+                    ? getCall(wh.conversation_id).catch(() => null)
+                    : Promise.resolve(null)
+            )
+        );
+
+        const outcomeToState = { tour_booked: 'complete', follow_up_needed: 'complete', incomplete: 'partial' };
+        const callHistory = recentWebhooks.map((wh, idx) => {
+            const vapiCall = vapiEnrichments[idx];
+            const fresh = vapiCall?.analysis?.structuredData || {};
+            const stored = wh.metadata?.vapi_structured_data || {};
+            const s = { ...stored, ...fresh };
+            const cn = s.child_name;
+            const ca = s.child_age;
+            const phoneCall = wh.metadata?.phone_call || {};
+
+            return {
+                id: wh._id.toString(),
+                conversation_id: wh.conversation_id,
+                agent_name: wh.agent_name || 'Nora',
+                received_at: wh.received_at,
+                duration_seconds: vapiCall?.duration || phoneCall.call_duration_secs || 0,
+                caller_number: vapiCall?.customer?.number || phoneCall.from_number || '',
+                called_number: phoneCall.to_number || '',
+                summary: vapiCall?.summary || wh.summary || '',
+                recording_url: vapiCall?.recordingUrl || '',
+                call_state: s.call_state || outcomeToState[s.call_outcome] || (wh.tour_booking_detected ? 'complete' : 'unknown'),
+                parent_name: s.parent_name || null,
+                parent_phone: s.parent_phone || null,
+                parent_email: s.parent_email || null,
+                child_name: cn ? (Array.isArray(cn) ? cn : [cn]) : null,
+                child_age: ca ? (Array.isArray(ca) ? ca : [ca]) : null,
+                tour_booked: !!s.tour_booked || wh.tour_booking_detected || false,
+                tour_date: s.tour_date || null,
+                tour_time: s.tour_time || null,
+                questions_asked: s.questions_asked || [],
+                topics_of_interest: s.topics_of_interest || [],
+                enrollment_urgency: s.enrollment_urgency || s.enrollment_timeframe || 'unknown',
+                language_spoken: s.language_spoken || 'English',
+                one_pager: s.one_pager || s.notes || null,
+            };
+        });
+
+        res.json({ needsAttention, todaysTours, wordCloud, todayCalls, callHistory });
     } catch (err) {
         console.error('Daily insights error:', err);
         res.status(500).json({ error: 'Internal server error' });
