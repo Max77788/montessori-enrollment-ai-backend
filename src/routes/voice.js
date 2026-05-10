@@ -754,4 +754,102 @@ router.post('/book-meeting', async (req, res) => {
     }
 });
 
+// ── Nora Tool: Get Current Date/Time in CST ──────────────────────────────
+// POST /api/voice/current-datetime-cst
+router.post('/current-datetime-cst', (req, res) => {
+    const now = new Date();
+    const cst = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'];
+
+    const result = {
+        iso: cst.toISOString(),
+        date: cst.toISOString().slice(0, 10),
+        time: cst.toTimeString().slice(0, 5),
+        day_of_week: dayNames[cst.getDay()],
+        day_of_week_index: cst.getDay(),
+        month: monthNames[cst.getMonth()],
+        month_index: cst.getMonth() + 1,
+        year: cst.getFullYear(),
+        today_date: cst.toISOString().slice(0, 10),
+        tomorrow_date: new Date(cst.getTime() + 86400000).toISOString().slice(0, 10),
+    };
+
+    res.json(result);
+});
+
+// ── Nora Tool: Get Booked Slots for a Date ───────────────────────────────
+// POST /api/voice/booked-slots
+router.post('/booked-slots', async (req, res) => {
+    try {
+        const { date, schoolId } = req.body;
+        if (!date) return res.status(400).json({ error: 'date is required (YYYY-MM-DD)' });
+
+        // Find school by aiNumber or use first active school if schoolId is provided
+        let schoolObjectId;
+        if (schoolId && mongoose.Types.ObjectId.isValid(schoolId)) {
+            schoolObjectId = new mongoose.Types.ObjectId(schoolId);
+        } else {
+            // Fallback: find the school with the matching AI number from the DB
+            const schools = await School.find({ status: 'active' }).select('_id aiNumber').lean();
+            if (schools.length > 0) {
+                schoolObjectId = schools[0]._id;
+            } else {
+                return res.status(404).json({ error: 'No active school found' });
+            }
+        }
+
+        const school = await School.findById(schoolObjectId).select('businessHoursStart businessHoursEnd timezone aiNumber').lean();
+        if (!school) return res.status(404).json({ error: 'School not found' });
+
+        const tz = school.timezone || 'America/Chicago';
+        const dayStart = new Date(date + 'T00:00:00');
+        const dayEnd = new Date(date + 'T23:59:59');
+
+        // Get busy slots from calendar
+        const busySlots = await getBusySlots(schoolObjectId, dayStart, dayEnd);
+
+        // Calculate all 30-min slots within business hours
+        const bizStart = school.businessHoursStart || '09:00';
+        const bizEnd = school.businessHoursEnd || '17:00';
+        const [sh, sm] = bizStart.split(':').map(Number);
+        const [eh, em] = bizEnd.split(':').map(Number);
+
+        const allSlots = [];
+        let current = new Date(date + `T${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}:00`);
+        const endTime = new Date(date + `T${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}:00`);
+
+        while (current < endTime) {
+            const slotEnd = new Date(current.getTime() + 30 * 60000);
+            if (slotEnd <= endTime) {
+                const slotStr = current.toTimeString().slice(0, 5);
+                const isBooked = busySlots.some(bs => {
+                    const bsStart = new Date(bs.start || bs.startDateTime);
+                    const bsEnd = new Date(bs.end || bs.endDateTime);
+                    return current < bsEnd && slotEnd > bsStart;
+                });
+                allSlots.push({ time: slotStr, booked: isBooked });
+            }
+            current = new Date(current.getTime() + 30 * 60000);
+        }
+
+        const availableSlots = allSlots.filter(s => !s.booked).map(s => s.time);
+        const bookedSlots = allSlots.filter(s => s.booked).map(s => s.time);
+
+        res.json({
+            date,
+            day_of_week: dayNames[new Date(date + 'T12:00:00').getDay()],
+            availableSlots,
+            bookedSlots,
+            total_available: availableSlots.length,
+        });
+    } catch (err) {
+        console.error('[BookedSlots] Error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 module.exports = router;

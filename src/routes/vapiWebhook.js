@@ -95,12 +95,20 @@ async function handleToolCalls(payload, res) {
             let result;
             try {
                 switch (funcName) {
-                    case 'check_availability': {
-                        result = await handleAvailabilityCheck(args);
+                    case 'get_current_datetime_cst': {
+                        result = handleCurrentDatetimeCST();
+                        break;
+                    }
+                    case 'get_booked_slots': {
+                        result = await handleGetBookedSlots(args);
                         break;
                     }
                     case 'book_appointment': {
                         result = await handleAppointmentBooking(payload, args);
+                        break;
+                    }
+                    case 'check_availability': {
+                        result = await handleAvailabilityCheck(args);
                         break;
                     }
                     case 'get_school_info': {
@@ -130,6 +138,90 @@ async function handleToolCalls(payload, res) {
         res.status(500).json({
             results: [{ toolCallId: 'error', result: 'Internal server error' }]
         });
+    }
+}
+
+/**
+ * Tool: Get current date/time in CST.
+ * Called silently by Nora at the start of every call.
+ */
+function handleCurrentDatetimeCST() {
+    const now = new Date();
+    const cst = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'];
+
+    return {
+        iso: cst.toISOString(),
+        date: cst.toISOString().slice(0, 10),
+        time: cst.toTimeString().slice(0, 5),
+        day_of_week: dayNames[cst.getDay()],
+        day_of_week_index: cst.getDay(),
+        month: monthNames[cst.getMonth()],
+        month_index: cst.getMonth() + 1,
+        year: cst.getFullYear(),
+        today_date: cst.toISOString().slice(0, 10),
+        tomorrow_date: new Date(cst.getTime() + 86400000).toISOString().slice(0, 10),
+    };
+}
+
+/**
+ * Tool: Get booked slots for a given date.
+ */
+async function handleGetBookedSlots(args) {
+    const { date } = args;
+    if (!date) return { error: 'Date is required (YYYY-MM-DD)' };
+
+    try {
+        const School = require('../models/School');
+        const { getBusySlots } = require('../services/calendarService');
+
+        const school = await School.findOne({ status: 'active' }).lean();
+        if (!school) return { error: 'No active school found' };
+
+        const dayStart = new Date(date + 'T00:00:00');
+        const dayEnd = new Date(date + 'T23:59:59');
+        const dayOfWeek = new Date(date + 'T12:00:00').getDay();
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+        if (dayOfWeek === 0 || dayOfWeek === 6) {
+            return { date, day_of_week: dayNames[dayOfWeek], availableSlots: [], bookedSlots: [], total_available: 0, is_weekend: true };
+        }
+
+        const busySlots = await getBusySlots(school._id, dayStart, dayEnd);
+        const bizStart = school.businessHoursStart || '09:00';
+        const bizEnd = school.businessHoursEnd || '17:00';
+        const [sh, sm] = bizStart.split(':').map(Number);
+        const [eh, em] = bizEnd.split(':').map(Number);
+
+        const allSlots = [];
+        let current = new Date(date + `T${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}:00`);
+        const endTime = new Date(date + `T${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}:00`);
+
+        while (current < endTime) {
+            const slotEnd = new Date(current.getTime() + 30 * 60000);
+            if (slotEnd <= endTime) {
+                const slotStr = current.toTimeString().slice(0, 5);
+                const isBooked = busySlots.some(bs => {
+                    const bsStart = new Date(bs.start || bs.startDateTime);
+                    const bsEnd = new Date(bs.end || bs.endDateTime);
+                    return current < bsEnd && slotEnd > bsStart;
+                });
+                allSlots.push({ time: slotStr, booked: isBooked });
+            }
+            current = new Date(current.getTime() + 30 * 60000);
+        }
+
+        return {
+            date, day_of_week: dayNames[dayOfWeek],
+            availableSlots: allSlots.filter(s => !s.booked).map(s => s.time),
+            bookedSlots: allSlots.filter(s => s.booked).map(s => s.time),
+            total_available: allSlots.filter(s => !s.booked).length,
+        };
+    } catch (err) {
+        console.error('[GetBookedSlots] Error:', err);
+        return { error: 'Unable to check availability.' };
     }
 }
 

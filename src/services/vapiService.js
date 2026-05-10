@@ -94,84 +94,63 @@ function buildVapiTools(backendUrl, schoolId) {
     return [
         {
             type: 'function',
+            async: false,
             function: {
-                name: 'check_availability',
-                description: 'Check available tour slots for a given date. Returns list of free 30-minute time slots.',
-                parameters: {
-                    type: 'object',
-                    properties: {
-                        date: {
-                            type: 'string',
-                            description: 'Date in YYYY-MM-DD format to check availability for'
-                        }
-                    },
-                    required: ['date']
-                }
+                name: 'get_current_datetime_cst',
+                description: 'Get the current date and time in Central Standard Time (America/Chicago). Returns today date, tomorrow date, day of week, month, year, and time.',
+                parameters: { type: 'object', properties: {}, required: [] }
             },
-            server: {
-                url: `${backendUrl}/api/voice/availability?schoolId=${schoolId}&date=`,
-                timeoutSeconds: 10
-            },
+            server: { url: `${backendUrl}/api/voice/current-datetime-cst`, timeoutSeconds: 10 },
             messages: [
-                { type: 'request-start', content: 'Let me check what times are available...' },
-                { type: 'request-complete', content: 'Here\'s what I found:' },
-                { type: 'request-failed', content: 'I\'m having a little trouble checking availability. Give me just a moment.' }
+                { type: 'request-start', content: '' },
+                { type: 'request-complete', content: '' },
+                { type: 'request-failed', content: 'I am having a little trouble on my end. Just give me one moment.' }
             ]
         },
         {
             type: 'function',
+            async: false,
+            function: {
+                name: 'get_booked_slots',
+                description: 'Get available tour time slots for a specific date. Returns availableSlots array with open time slots and bookedSlots with taken times. Only returns weekday slots.',
+                parameters: {
+                    type: 'object',
+                    properties: { date: { type: 'string', description: 'Date in YYYY-MM-DD format' } },
+                    required: ['date']
+                }
+            },
+            server: { url: `${backendUrl}/api/voice/booked-slots`, timeoutSeconds: 10 },
+            messages: [
+                { type: 'request-start', content: 'Let me take a look at that for you.' },
+                { type: 'request-complete', content: '' },
+                { type: 'request-failed', content: 'I am having a little trouble on my end. Just give me one moment.' }
+            ]
+        },
+        {
+            type: 'function',
+            async: false,
             function: {
                 name: 'book_appointment',
-                description: 'Book a school tour for a parent. Requires all parent and child information plus the confirmed date and time.',
+                description: 'Book a school tour for a parent after all details are confirmed.',
                 parameters: {
                     type: 'object',
                     properties: {
-                        date: { type: 'string', description: 'Tour date in YYYY-MM-DD format' },
-                        time: { type: 'string', description: 'Tour time in HH:MM format (24-hour)' },
-                        parent_name: { type: 'string', description: 'Full name of the parent/guardian' },
+                        date: { type: 'string', description: 'Tour date YYYY-MM-DD' },
+                        time: { type: 'string', description: 'Tour time HH:MM (24-hour)' },
+                        parent_name: { type: 'string', description: 'Parent full name' },
                         parent_phone: { type: 'string', description: 'Parent phone number' },
                         parent_email: { type: 'string', description: 'Parent email address' },
-                        child_name: { type: 'string', description: 'Child\'s name' },
-                        child_age: { type: 'string', description: 'Child\'s age (e.g. "3 years")' },
-                        reason: { type: 'string', description: 'Reason for tour / enrollment interest' }
+                        child_name: { type: 'string', description: 'Child name' },
+                        child_age: { type: 'string', description: 'Child age (e.g. "3 years")' },
                     },
                     required: ['date', 'time', 'parent_name', 'parent_phone', 'parent_email', 'child_name', 'child_age']
                 }
             },
-            server: {
-                url: `${backendUrl}/api/voice/vapi-book`,
-                timeoutSeconds: 15
-            },
+            server: { url: `${backendUrl}/api/voice/vapi-book`, timeoutSeconds: 15 },
             messages: [
                 { type: 'request-start', content: 'Let me lock that in for you...' },
-                { type: 'request-complete', content: 'Your tour is booked!' },
-                { type: 'request-failed', content: 'I wasn\'t able to complete the booking just now. Let me try that again.' }
-            ]
-        },
-        {
-            type: 'function',
-            function: {
-                name: 'get_school_info',
-                description: 'Get information about the school including hours, address, and programs.',
-                parameters: {
-                    type: 'object',
-                    properties: {
-                        query: {
-                            type: 'string',
-                            description: 'What information the parent is asking about (e.g. "hours", "programs", "address", "pricing")'
-                        }
-                    },
-                    required: ['query']
-                }
-            },
-            server: {
-                url: `${backendUrl}/api/voice/agent-config?schoolId=${schoolId}`,
-                timeoutSeconds: 10
-            },
-            messages: [
-                { type: 'request-start', content: 'Let me look that up for you...' },
-                { type: 'request-complete', content: 'Here\'s what I can tell you:' },
-                { type: 'request-failed', content: 'I don\'t have that information right now, but our team can help.' }
+                { type: 'request-complete', content: '' },
+                { type: 'request-failed', content: 'I am having a little trouble on my end. Just give me one moment.' }
             ]
         }
     ];
