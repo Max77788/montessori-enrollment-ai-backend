@@ -1059,66 +1059,7 @@ router.get('/daily-insights', async (req, res) => {
                 : wh.received_at,
         }));
 
-        // ── 4. Call History: recent calls enriched with VAPI API structured data ──
-        const recentWebhooks = await ElevenLabsWebhook.find({
-            type: 'post_call_transcription',
-            $or: [
-                { schoolId: schoolObjectId },
-                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
-            ]
-        })
-            .select('conversation_id agent_name summary received_at metadata transcript tour_booking_detected')
-            .sort({ received_at: -1 })
-            .limit(20)
-            .lean();
-
-        const { getCall } = require('../services/vapiService');
-        const vapiEnrichments = await Promise.all(
-            recentWebhooks.map(wh =>
-                wh.conversation_id
-                    ? getCall(wh.conversation_id).catch(() => null)
-                    : Promise.resolve(null)
-            )
-        );
-
-        const outcomeToState = { tour_booked: 'complete', follow_up_needed: 'complete', incomplete: 'partial' };
-        const callHistory = recentWebhooks.map((wh, idx) => {
-            const vapiCall = vapiEnrichments[idx];
-            const fresh = vapiCall?.analysis?.structuredData || {};
-            const stored = wh.metadata?.vapi_structured_data || {};
-            const s = { ...stored, ...fresh };
-            const cn = s.child_name;
-            const ca = s.child_age;
-            const phoneCall = wh.metadata?.phone_call || {};
-
-            return {
-                id: wh._id.toString(),
-                conversation_id: wh.conversation_id,
-                agent_name: wh.agent_name || 'Nora',
-                received_at: wh.received_at,
-                duration_seconds: vapiCall?.duration || phoneCall.call_duration_secs || 0,
-                caller_number: vapiCall?.customer?.number || phoneCall.from_number || '',
-                called_number: phoneCall.to_number || '',
-                summary: vapiCall?.summary || wh.summary || '',
-                recording_url: vapiCall?.recordingUrl || '',
-                call_state: s.call_state || outcomeToState[s.call_outcome] || (wh.tour_booking_detected ? 'complete' : 'unknown'),
-                parent_name: s.parent_name || null,
-                parent_phone: s.parent_phone || null,
-                parent_email: s.parent_email || null,
-                child_name: cn ? (Array.isArray(cn) ? cn : [cn]) : null,
-                child_age: ca ? (Array.isArray(ca) ? ca : [ca]) : null,
-                tour_booked: !!s.tour_booked || wh.tour_booking_detected || false,
-                tour_date: s.tour_date || null,
-                tour_time: s.tour_time || null,
-                questions_asked: s.questions_asked || [],
-                topics_of_interest: s.topics_of_interest || [],
-                enrollment_urgency: s.enrollment_urgency || s.enrollment_timeframe || 'unknown',
-                language_spoken: s.language_spoken || 'English',
-                one_pager: s.one_pager || s.notes || null,
-            };
-        });
-
-        res.json({ needsAttention, todaysTours, wordCloud, todayCalls, callHistory, targetDate: todayStart.toISOString() });
+        res.json({ needsAttention, todaysTours, wordCloud, todayCalls, targetDate: todayStart.toISOString() });
     } catch (err) {
         console.error('Daily insights error:', err);
         res.status(500).json({ error: 'Internal server error' });
@@ -1484,28 +1425,15 @@ router.get('/call-logs', async (req, res) => {
             $or: orConditions,
         }).sort({ received_at: -1 }).limit(50).lean();
 
-        // Enrich with fresh VAPI API data (pull analysis.structuredData from VAPI call logs)
-        const { getCall } = require('../services/vapiService');
-        const vapiEnrichments = await Promise.all(
-            webhooks.map(wh =>
-                wh.conversation_id
-                    ? getCall(wh.conversation_id).catch(() => null)
-                    : Promise.resolve(null)
-            )
-        );
-
-        const webhookSessions = webhooks.map((wh, idx) => {
+        const webhookSessions = webhooks.map((wh) => {
             const transcript = Array.isArray(wh.transcript) ? wh.transcript.map(t => ({
                 role: t.role === 'agent' ? 'Assistant' : 'Parent',
                 text: t.message || t.text || '',
                 timestamp: t.time_in_call_secs ? new Date(wh.received_at.getTime() + t.time_in_call_secs * 1000) : wh.received_at
             })) : [];
 
-            // Merge stored data with fresh VAPI API data
-            const vapiCall = vapiEnrichments[idx];
-            const vapiFresh = vapiCall?.analysis?.structuredData || null;
-            const stored = wh.metadata?.vapi_structured_data || {};
-            const raw = { ...stored, ...(vapiFresh || {}) };
+            // Use stored VAPI structured data (no live API enrichment for speed)
+            const raw = wh.metadata?.vapi_structured_data || {};
             const cn = raw.child_name;
             const ca = raw.child_age;
             const phoneCall = wh.metadata?.phone_call || {};
@@ -1514,13 +1442,12 @@ router.get('/call-logs', async (req, res) => {
             return {
                 id: wh._id.toString(),
                 sessionId: wh.conversation_id,
-                participantId: vapiCall?.customer?.number || wh.metadata?.phone_call?.from_number || wh.tour_booking_extracted?.phone || 'Web Widget',
+                participantId: wh.metadata?.phone_call?.from_number || wh.tour_booking_extracted?.phone || 'Web Widget',
                 transcript,
-                summary: vapiCall?.summary || wh.summary || '',
-                recordingUrl: vapiCall?.recordingUrl
-                    || vapiMeta.recordingUrl
+                summary: wh.summary || '',
+                recordingUrl: vapiMeta.recordingUrl
                     || `${backendUrl}/api/school/calls/${wh.conversation_id}/audio?token=${userToken}`,
-                duration: vapiCall?.duration || getCallDurationSeconds(wh),
+                duration: getCallDurationSeconds(wh),
                 createdAt: wh.received_at,
                 // VAPI structured data (normalized)
                 call_state: raw.call_state || ({ tour_booked: 'complete', follow_up_needed: 'complete', incomplete: 'partial' })[raw.call_outcome] || (wh.tour_booking_detected ? 'complete' : 'unknown'),
@@ -2667,16 +2594,6 @@ router.get('/recent-calls', async (req, res) => {
             .limit(20)
             .lean();
 
-        // Enrich with fresh VAPI API data (pull analysis.structuredData from VAPI call logs)
-        const { getCall } = require('../services/vapiService');
-        const vapiEnrichments = await Promise.all(
-            recentCalls.map(call =>
-                call.conversation_id
-                    ? getCall(call.conversation_id).catch(() => null)
-                    : Promise.resolve(null)
-            )
-        );
-
         // Normalize VAPI structured data (VAPI field names → frontend field names)
         const normalizeStructured = (s) => {
             if (!s || typeof s !== 'object') return {};
@@ -2707,32 +2624,19 @@ router.get('/recent-calls', async (req, res) => {
             };
         };
 
-        const formatted = recentCalls.map((call, idx) => {
-            // Merge: VAPI API data (freshest) overrides stored webhook data
-            const vapiCall = vapiEnrichments[idx];
-            const vapiStructured = vapiCall?.analysis?.structuredData || null;
-            const storedStructured = call.metadata?.vapi_structured_data || null;
-            const merged = { ...(storedStructured || {}), ...(vapiStructured || {}) };
-            const structured = normalizeStructured(merged);
+        const formatted = recentCalls.map(call => {
+            const structured = normalizeStructured(call.metadata?.vapi_structured_data);
             const phoneCall = call.metadata?.phone_call || {};
-
-            // Also pull recording URL from VAPI API if not in our DB
-            const recordingUrl = call.metadata?.vapi_metadata?.recordingUrl
-                || call.metadata?.vapi?.recordingUrl
-                || vapiCall?.recordingUrl
-                || '';
 
             return {
                 id: call._id.toString(),
                 conversation_id: call.conversation_id,
                 agent_name: call.agent_name || 'Nora',
                 received_at: call.received_at,
-                duration_seconds: vapiCall?.duration || phoneCall.call_duration_secs || 0,
-                caller_number: vapiCall?.customer?.number || phoneCall.from_number || '',
+                duration_seconds: phoneCall.call_duration_secs || 0,
+                caller_number: phoneCall.from_number || '',
                 called_number: phoneCall.to_number || '',
-                summary: vapiCall?.summary || call.summary || '',
-                recording_url: recordingUrl,
-                // VAPI structured data (normalized + enriched from VAPI API)
+                summary: call.summary || '',
                 ...structured,
             };
         });
