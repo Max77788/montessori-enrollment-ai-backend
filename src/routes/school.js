@@ -1359,57 +1359,8 @@ router.get('/call-logs', async (req, res) => {
         };
         const schoolAiNumber = normalizePhone(school.aiNumber || '');
 
-        // ── 1. Fetch SIP Logs (VoiceAI) ──
-        let voiceAiSessions = [];
-        if (schoolAiNumber) {
-            try {
-                const digits = schoolAiNumber;
-                const normalizedNumber = `+${digits}`;
-                const participantId = `sip_${normalizedNumber}`;
-
-                const bennyDb = mongoose.connection.useDb('benny');
-                const collection = bennyDb.collection('voiceAI');
-
-                const schoolLogs = await collection.find({ participant_id: participantId }).project({ session_id: 1 }).toArray();
-                const sessionIds = [...new Set(schoolLogs.map(l => l.session_id))];
-
-                if (sessionIds.length > 0) {
-                    const allLogs = await collection.find({ session_id: { $in: sessionIds } }).sort({ created_at: -1 }).toArray();
-                    const sessionsMap = {};
-                    allLogs.forEach(log => {
-                        const sid = log.session_id;
-                        if (!sessionsMap[sid]) {
-                            sessionsMap[sid] = {
-                                id: log._id.toString(),
-                                sessionId: sid,
-                                participantId: log.participant_id?.replace('sip_', '') || 'Unknown',
-                                transcript: [],
-                                summary: log.transcript_summary || '',
-                                recordingUrl: log.recording_url,
-                                duration: log.duration_seconds || 0,
-                                createdAt: log.created_at || log.timestamp
-                            };
-                        }
-                        if (Array.isArray(log.transcript)) {
-                            log.transcript.forEach(t => {
-                                sessionsMap[sid].transcript.push({
-                                    role: t.role || 'unknown',
-                                    text: t.content || t.text || t.message || (typeof t === 'string' ? t : ''),
-                                    timestamp: t.timestamp || log.created_at
-                                });
-                            });
-                        }
-                        if (log.recording_url && !sessionsMap[sid].recordingUrl) sessionsMap[sid].recordingUrl = log.recording_url;
-                    });
-                    voiceAiSessions = Object.values(sessionsMap);
-                }
-            } catch (err) {
-                console.error('[CallLogs] VoiceAI error:', err);
-            }
-        }
-
         const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
-        // ── 2. Fetch AI Logs (VAPI Webhooks) ──
+        // ── Fetch AI Logs (VAPI Webhooks) ──
         // VAPI webhooks have schoolId=null — match by schoolId OR phone number
         const phoneDigits = schoolAiNumber || '';
         const orConditions = [{ schoolId: schoolObjectId }];
@@ -1476,30 +1427,7 @@ router.get('/call-logs', async (req, res) => {
             };
         });
 
-        // ── 3. Merge and Deduplicate ──
-        const finalSessionsMap = new Map();
-        voiceAiSessions.forEach(s => {
-            const key = `${normalizePhone(s.participantId)}_${new Date(s.createdAt).getTime()}`;
-            finalSessionsMap.set(key, s);
-        });
-
-        webhookSessions.forEach(ws => {
-            const key = `${normalizePhone(ws.participantId)}_${new Date(ws.createdAt).getTime()}`;
-            if (finalSessionsMap.has(key)) {
-                const existing = finalSessionsMap.get(key);
-                // Merge transcript and recording if webhook has better data
-                finalSessionsMap.set(key, {
-                    ...existing,
-                    ...ws,
-                    transcript: ws.transcript.length > existing.transcript.length ? ws.transcript : existing.transcript,
-                    id: existing.id // Keep original ID for stability
-                });
-            } else {
-                finalSessionsMap.set(key, ws);
-            }
-        });
-
-        const sortedLogs = Array.from(finalSessionsMap.values())
+        const sortedLogs = webhookSessions
             .map(session => {
                 session.transcript.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 session.transcript = session.transcript.filter(t => t.text);
