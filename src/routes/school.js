@@ -30,9 +30,7 @@ const {
     extractTourDetails
 } = require('../utils/openai');
 
-
-// APPOINTMENT_AGENT_PROMPT is now imported from ../utils/elevenlabs
-
+const { middleware: cache } = require('../utils/cache');
 
 const router = express.Router();
 // Apply auth middleware to all school routes
@@ -335,7 +333,7 @@ async function updateAgentWithKnowledgeBase(
 // Helper function to ingest knowledge base is now imported from elevenlabs utility
 
 // GET /api/school/dashboard - School-specific metrics
-router.get('/dashboard', async (req, res) => {
+router.get('/dashboard', cache(15000), async (req, res) => {
     try {
         const schoolId = req.user.schoolId;
         if (!schoolId) {
@@ -691,8 +689,8 @@ router.get('/inquiry-submissions', async (req, res) => {
     }
 });
 
-// GET /api/school/daily-insights - Needs-attention calls + today's tour details
-router.get('/daily-insights', async (req, res) => {
+// GET /api/school/daily-insights (cached 15s)
+router.get('/daily-insights', cache(15000), async (req, res) => {
     try {
         const schoolId = req.user.schoolId;
         const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
@@ -1067,8 +1065,8 @@ router.get('/daily-insights', async (req, res) => {
     }
 });
 
-// GET /api/school/action-needed - All action-needed items (not just today)
-router.get('/action-needed', async (req, res) => {
+// GET /api/school/action-needed (cached 15s)
+router.get('/action-needed', cache(15000), async (req, res) => {
     try {
         const schoolId = req.user.schoolId;
         const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
@@ -1339,8 +1337,8 @@ router.post('/wordcloud/generate', async (req, res) => {
 });
 
 // GET /api/school/call-logs - Fetch detailed call logs from voiceAI collection in benny DB
-// GET /api/school/call-logs - Fetch detailed call logs from both VoiceAI and ElevenLabs
-router.get('/call-logs', async (req, res) => {
+// GET /api/school/call-logs (cached 15s)
+router.get('/call-logs', cache(15000), async (req, res) => {
     try {
         const schoolId = req.user.schoolId;
         const school = await School.findById(schoolId).select('aiNumber elevenlabsAgentId').lean();
@@ -2501,8 +2499,8 @@ router.post('/test-followup', async (req, res) => {
     }
 });
 
-// GET /api/school/recent-calls — Returns latest webhooks with VAPI structured data
-router.get('/recent-calls', async (req, res) => {
+// GET /api/school/recent-calls (cached 15s)
+router.get('/recent-calls', cache(15000), async (req, res) => {
     try {
         const schoolId = req.user.schoolId;
         if (!schoolId) return res.status(400).json({ error: 'No school associated' });
