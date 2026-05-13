@@ -426,7 +426,6 @@ router.get('/dashboard', async (req, res) => {
                 return voiceAiCallsInner;
             })(),
             // Search by both discrete schoolId (best) and unique AI number (resilient fallback)
-            // Increased limit to 500 to capture more historical data
             ElevenLabsWebhook.find({
                 type: 'post_call_transcription',
                 $or: [
@@ -439,14 +438,13 @@ router.get('/dashboard', async (req, res) => {
                     }
                 ]
             })
-                // Omit raw_payload (large debug blob) and audio; dashboard only needs metadata + transcript + summary fields
                 .select('-raw_payload -audio_base64')
                 .sort({ received_at: -1 })
-                .limit(500)
+                .limit(100)
                 .lean(),
             CallLog.find({ schoolId: schoolObjectId })
                 .sort({ createdAt: -1 })
-                .limit(500)
+                .limit(100)
                 .lean(),
             TourBooking.find({ schoolId })
                 .select('phone parentName childName scheduledAt')
@@ -733,9 +731,12 @@ router.get('/daily-insights', async (req, res) => {
         const wordCloud = school?.wordCloud || [];
 
         // Extract comprehensive data from transcripts using single prompt for needs-attention calls
+        // Limit to 5 to prevent slow loads; skip if no OPENAI_API_KEY
+        const hasOpenAI = !!process.env.OPENAI_API_KEY;
         const needsAttention = await Promise.all(
             todayWebhooks
                 .filter(wh => !wh.tour_booking_detected && !wh.actionTaken)
+                .slice(0, 5)
                 .map(async (wh) => {
                     const transcriptText = Array.isArray(wh.transcript) 
                         ? wh.transcript.map(t => `${t.role}: ${t.message || t.text}`).join('\n')
@@ -989,11 +990,11 @@ router.get('/daily-insights', async (req, res) => {
             }
         });
 
-        // Batch process the ones that need it (limit to 5 to prevent slow loading)
-        if (toursToProcess.length > 0) {
+        // Batch process the ones that need it (limit to 5, skip if no OpenAI key)
+        if (toursToProcess.length > 0 && process.env.OPENAI_API_KEY) {
             console.log(`[DAILY-INSIGHTS] Batch processing ${toursToProcess.length} tours (limiting to 5)...`);
             const { batchExtractTourDetails } = require('../utils/openai');
-            const toursToProcessNow = toursToProcess.slice(0, 5); // Process max 5 at a time
+            const toursToProcessNow = toursToProcess.slice(0, 5);
             const batchResults = await batchExtractTourDetails(toursToProcessNow);
 
             for (const item of toursToProcessNow) {
@@ -1091,8 +1092,9 @@ router.get('/action-needed', async (req, res) => {
             ]
         }).sort({ received_at: -1 }).lean();
 
-        // Extract comprehensive data from transcripts using single prompt
-        const actionNeeded = await Promise.all(actionNeededWebhooks.map(async (wh) => {
+        // Extract comprehensive data from transcripts (limit 5, skip if no OpenAI)
+        const actionNeeded = await Promise.all(
+            actionNeededWebhooks.slice(0, 5).map(async (wh) => {
             const transcriptText = Array.isArray(wh.transcript) 
                 ? wh.transcript.map(t => `${t.role}: ${t.message || t.text}`).join('\n')
                 : '';
