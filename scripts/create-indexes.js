@@ -25,6 +25,12 @@ async function createIndexes() {
       { name: 'action_needed_query_idx' }
     );
 
+    console.log('Creating index: { calledNumberDigits: 1, type: 1, received_at: -1 }');
+    await collection.createIndex(
+      { calledNumberDigits: 1, type: 1, received_at: -1 },
+      { name: 'called_number_lookup_idx' }
+    );
+
     console.log('Indexes created successfully');
   } catch (err) {
     console.error('Error creating indexes:', err);

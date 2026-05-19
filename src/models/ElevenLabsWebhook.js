@@ -20,6 +20,7 @@ const elevenLabsWebhookSchema = new mongoose.Schema({
     tour_booking_extracted: { type: mongoose.Schema.Types.Mixed, default: null }, // full extracted booking info
     ai_processed: { type: Boolean, default: false }, // whether AI processing is complete
     schoolId: { type: mongoose.Schema.Types.ObjectId, ref: 'School', index: true }, // link to the school
+    calledNumberDigits: { type: String, default: '', index: true }, // last 10 digits of called number — denormalized for fast lookups
     extractedTags: { type: [String], default: [] }, // AI-extracted tags from transcript
     actionTaken: { type: Boolean, default: false }, // whether action has been taken
     actionTakenAt: { type: Date, default: null }, // when action was taken

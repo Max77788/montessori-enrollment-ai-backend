@@ -428,12 +428,7 @@ router.get('/dashboard', cache(15000), async (req, res) => {
                 type: 'post_call_transcription',
                 $or: [
                     { schoolId: schoolObjectId },
-                    {
-                        'metadata.phone_call.agent_number': { $regex: schoolAiNumber || 'nevermatch' },
-                    },
-                    {
-                        'metadata.phone_call.to_number': { $regex: schoolAiNumber || 'nevermatch' }
-                    }
+                    ...(schoolAiNumber ? [{ schoolId: null, calledNumberDigits: schoolAiNumber.slice(-10) }] : []),
                 ]
             })
                 .select('-raw_payload -audio_base64')
@@ -721,7 +716,7 @@ router.get('/daily-insights', cache(15000), async (req, res) => {
             received_at: { $gte: todayStart, $lte: todayEnd },
             $or: [
                 { schoolId: schoolObjectId },
-                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
+                ...(schoolAiNumber ? [{ schoolId: null, calledNumberDigits: schoolAiNumber.slice(-10) }] : []),
             ]
         }).sort({ received_at: -1 }).lean();
 
@@ -868,7 +863,7 @@ router.get('/daily-insights', cache(15000), async (req, res) => {
             type: 'post_call_transcription',
             $or: [
                 { schoolId: schoolObjectId },
-                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
+                ...(schoolAiNumber ? [{ schoolId: null, calledNumberDigits: schoolAiNumber.slice(-10) }] : []),
             ],
             received_at: { $gte: lookbackStart }
         }).sort({ received_at: -1 }).limit(500).lean();
@@ -1086,7 +1081,7 @@ router.get('/action-needed', cache(15000), async (req, res) => {
             actionTaken: { $ne: true },
             $or: [
                 { schoolId: schoolObjectId },
-                ...(schoolAiNumber ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolAiNumber.slice(-10) } }] : []),
+                ...(schoolAiNumber ? [{ schoolId: null, calledNumberDigits: schoolAiNumber.slice(-10) }] : []),
             ]
         }).sort({ received_at: -1 }).lean();
 
@@ -1360,21 +1355,19 @@ router.get('/call-logs', cache(15000), async (req, res) => {
         const schoolObjectId = new mongoose.Types.ObjectId(schoolId);
         // ── Fetch AI Logs (VAPI Webhooks) ──
         // VAPI webhooks have schoolId=null — match by schoolId OR phone number
-        const phoneDigits = schoolAiNumber || '';
+        const phoneDigits = schoolAiNumber.slice(-10);
         const orConditions = [{ schoolId: schoolObjectId }];
         // Only add phone-based matching if the school has a phone number
         if (phoneDigits) {
-            // Match against last 10 digits (VAPI stores as +13363987499, +1 prefix possible)
-            const digits10 = phoneDigits.slice(-10);
             orConditions.push({
                 schoolId: null,
-                'metadata.phone_call.to_number': { $regex: digits10 }
+                calledNumberDigits: phoneDigits,
             });
         }
         const webhooks = await ElevenLabsWebhook.find({
             type: 'post_call_transcription',
             $or: orConditions,
-        }).sort({ received_at: -1 }).limit(50).lean();
+        }).select('-raw_payload').sort({ received_at: -1 }).limit(25).lean();
 
         const webhookSessions = webhooks.map((wh) => {
             const transcript = Array.isArray(wh.transcript) ? wh.transcript.map(t => ({
@@ -2514,7 +2507,7 @@ router.get('/recent-calls', cache(15000), async (req, res) => {
             type: 'post_call_transcription',
             $or: [
                 { schoolId: schoolObjectId },
-                ...(schoolPhoneDigits ? [{ schoolId: null, 'metadata.phone_call.to_number': { $regex: schoolPhoneDigits } }] : []),
+                ...(schoolPhoneDigits ? [{ schoolId: null, calledNumberDigits: schoolPhoneDigits }] : []),
             ]
         })
             .select('conversation_id agent_name summary received_at metadata transcript')

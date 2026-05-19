@@ -419,6 +419,7 @@ async function processEndOfCallReport(payload) {
             processed: false,
             received_at: new Date(),
             schoolId: schoolObjectId,
+            calledNumberDigits: (message.phoneNumber?.number || '').replace(/\D/g, '').slice(-10),
         });
 
         console.log(`[VAPI EOCR] Saved webhook: ${webhookDoc._id}`);

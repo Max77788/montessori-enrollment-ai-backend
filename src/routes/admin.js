@@ -894,7 +894,7 @@ router.delete('/schools/:id', async (req, res) => {
                     { schoolId: objectId },
                     ...(schoolAiDigits ? [
                         { 'metadata.phone_call.agent_number': { $regex: schoolAiDigits } },
-                        { 'metadata.phone_call.to_number': { $regex: schoolAiDigits } },
+                        { calledNumberDigits: schoolAiDigits },
                     ] : [])
                 ]
             }),

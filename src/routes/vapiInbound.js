@@ -324,6 +324,7 @@ async function processEndOfCallReport(payload, req) {
             processed: false,
             received_at: new Date(),
             schoolId: schoolObjectId,
+            calledNumberDigits: (message.phoneNumber?.number || '').replace(/\D/g, '').slice(-10),
         });
 
         console.log(`[VAPI Webhook] Saved: ${webhookDoc._id}`);
