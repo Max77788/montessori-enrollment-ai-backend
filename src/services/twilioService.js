@@ -77,8 +77,13 @@ async function purchasePhoneNumber(opts = {}) {
 async function buyNumber(phoneNumber) {
     console.log(`[Twilio] Purchasing ${phoneNumber}...`);
 
+    const webhookUrl = process.env.TWILIO_PHONE_NUMBER_WEBHOOK_URL
+        || 'https://aifusioniqlabs.app.n8n.cloud/webhook/accept-provided-emails';
+
     const buyParams = new URLSearchParams();
     buyParams.append('PhoneNumber', phoneNumber);
+    buyParams.append('VoiceUrl', webhookUrl);
+    buyParams.append('VoiceMethod', 'POST');
 
     const buyRes = await axios.post(
         `${TWILIO_API_BASE}/Accounts/${TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json`,
@@ -88,6 +93,7 @@ async function buyNumber(phoneNumber) {
 
     const purchased = buyRes.data;
     console.log(`[Twilio] Purchased: ${purchased.phone_number} (SID: ${purchased.sid})`);
+    console.log(`[Twilio] Voice webhook set to: ${webhookUrl}`);
 
     return {
         phoneNumber: purchased.phone_number,
