@@ -718,7 +718,7 @@ router.get('/daily-insights', cache(15000), async (req, res) => {
                 { schoolId: schoolObjectId },
                 ...(schoolAiNumber ? [{ schoolId: null, calledNumberDigits: schoolAiNumber.slice(-10) }] : []),
             ]
-        }).sort({ received_at: -1 }).lean();
+        }).select('-raw_payload -audio_base64').sort({ received_at: -1 }).lean();
 
         // Use cached word cloud from School model
         const wordCloud = school?.wordCloud || [];
@@ -866,7 +866,7 @@ router.get('/daily-insights', cache(15000), async (req, res) => {
                 ...(schoolAiNumber ? [{ schoolId: null, calledNumberDigits: schoolAiNumber.slice(-10) }] : []),
             ],
             received_at: { $gte: lookbackStart }
-        }).sort({ received_at: -1 }).limit(500).lean();
+        }).select('-raw_payload -audio_base64').sort({ received_at: -1 }).limit(500).lean();
 
         // Create a phone-to-webhook map for efficient lookup
         const phoneToWebhookMap = new Map();
@@ -1083,7 +1083,7 @@ router.get('/action-needed', cache(15000), async (req, res) => {
                 { schoolId: schoolObjectId },
                 ...(schoolAiNumber ? [{ schoolId: null, calledNumberDigits: schoolAiNumber.slice(-10) }] : []),
             ]
-        }).sort({ received_at: -1 }).lean();
+        }).select('-raw_payload -audio_base64').sort({ received_at: -1 }).lean();
 
         // Extract comprehensive data from transcripts (limit 5, skip if no OpenAI)
         const actionNeeded = await Promise.all(
