@@ -118,15 +118,17 @@ router.post('/assistant-request', async (req, res) => {
             const cleanBaseUrl = baseDomain.replace(/\/+$/, ''); // strip trailing slash
             const calendarProvider = school.preferredCalendar || 'google';
             const tourBookingLink = school.tourBookingLink || '';
-            const transferNumber = school.humanTransferPhoneNumber || school.escalationNumber || '';
+            const humanTransferEnabled = !!school.enableHumanTransfer;
+            const transferNumber = (humanTransferEnabled && (school.humanTransferPhoneNumber || school.escalationNumber)) || '';
 
             console.log('[VAPI →] Using assistantId:', asstId, school.vapiAssistantId ? '(from school)' : '(DEFAULT fallback)');
             console.log('[VAPI →] Calendar:', calendarProvider);
+            console.log('[VAPI →] Human transfer:', humanTransferEnabled ? `ENABLED → ${transferNumber || 'NO NUMBER'}` : 'DISABLED');
             if (tourBookingLink) console.log('[VAPI →] Tour booking link:', tourBookingLink);
 
-            // Transfer call tool
+            // Transfer call tool — only when BOTH enabled AND number provided
             const tools = [];
-            if (transferNumber) {
+            if (humanTransferEnabled && transferNumber) {
                 tools.push({
                     type: 'transferCall',
                     destinations: [
@@ -138,6 +140,8 @@ router.post('/assistant-request', async (req, res) => {
                     ]
                 });
                 console.log('[VAPI →] Transfer tool added — number:', transferNumber);
+            } else if (humanTransferEnabled && !transferNumber) {
+                console.log('[VAPI →] ⚠️ Human transfer enabled but no forwarding number — tool NOT added');
             }
 
             const response = {
@@ -154,6 +158,7 @@ router.post('/assistant-request', async (req, res) => {
                         business_hours_end: school.businessHoursEnd || '17:00',
                         school_address: school.address || '',
                         tour_booking_link: tourBookingLink || '[not provided]',
+                        is_human_transfer: humanTransferEnabled ? 'true' : 'false',
                     }
                 }
             };
@@ -176,7 +181,7 @@ router.post('/assistant-request', async (req, res) => {
             const phoneDoc = await PhoneNumber.findOne({ vapiPhoneId: vapiPhoneId }).lean();
             if (phoneDoc && phoneDoc.schoolId) {
                 school = await School.findById(phoneDoc.schoolId)
-                    .select('vapiAssistantId name _id qaPairs aiNumber preferredCalendar businessHoursStart businessHoursEnd address humanTransferPhoneNumber escalationNumber tourBookingLink')
+                    .select('vapiAssistantId name _id qaPairs aiNumber preferredCalendar businessHoursStart businessHoursEnd address humanTransferPhoneNumber escalationNumber enableHumanTransfer tourBookingLink')
                     .lean();
                 console.log(`[VAPI →] Found by VAPI phone ID: "${school?.name}" (phone: ${phoneDoc.phone_number})`);
             }
@@ -188,7 +193,7 @@ router.post('/assistant-request', async (req, res) => {
             console.log('[VAPI →] Normalized called number:', normalizedCalled);
 
             const schools = await School.find({ status: 'active' })
-                .select('aiNumber name vapiAssistantId _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address humanTransferPhoneNumber escalationNumber tourBookingLink')
+                .select('aiNumber name vapiAssistantId _id qaPairs preferredCalendar businessHoursStart businessHoursEnd address humanTransferPhoneNumber escalationNumber enableHumanTransfer tourBookingLink')
                 .lean();
 
             console.log(`[VAPI →] Active schools: ${schools.length}`);
