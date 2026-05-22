@@ -1792,9 +1792,10 @@ router.put('/settings', async (req, res) => {
         if (tourReminderSmsTemplate !== undefined) school.tourReminderSmsTemplate = tourReminderSmsTemplate;
         if (tourBookingLink !== undefined) school.tourBookingLink = tourBookingLink;
 
-        // Human transfer is gated at call-time by /assistant-request:
-        // both enableHumanTransfer AND a phone number must be present for the tool to be passed.
-        // No need to block saving here — the school can enable it and add the number later.
+        // Require forwarding number when human transfer is enabled
+        if (school.enableHumanTransfer && !school.humanTransferPhoneNumber) {
+            return res.status(400).json({ error: 'Please provide a forwarding phone number when Human Transfer is enabled.' });
+        }
 
         // If human transfer fields are present in payload, always sync to ElevenLabs to avoid UI/API drift.
         const humanTransferChanged =
