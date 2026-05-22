@@ -227,18 +227,73 @@ async function handleGetBookedSlots(args) {
 
 /**
  * Tool: Check tour availability for a given date.
+ * Uses the same calendar logic as get_booked_slots but returns a simpler yes/no answer.
  */
 async function handleAvailabilityCheck(args) {
     const { date } = args;
     if (!date) return { error: 'Date is required (YYYY-MM-DD)' };
 
-    // School ID needs to come from the assistant metadata or call metadata
-    // For now, return a generic response
-    return {
-        date,
-        available: true,
-        message: 'Please use the booking system to check exact availability.',
-    };
+    try {
+        const School = require('../models/School');
+        const { getBusySlots } = require('../services/calendarService');
+
+        const school = await School.findOne({ status: 'active' }).lean();
+        if (!school) return { error: 'No active school found' };
+
+        const dayStart = new Date(date + 'T00:00:00');
+        const dayEnd = new Date(date + 'T23:59:59');
+        const dayOfWeek = new Date(date + 'T12:00:00').getDay();
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+        if (dayOfWeek === 0 || dayOfWeek === 6) {
+            return {
+                date,
+                day_of_week: dayNames[dayOfWeek],
+                available: false,
+                reason: 'Tours are only available Monday through Friday.',
+            };
+        }
+
+        const busySlots = await getBusySlots(school._id, dayStart, dayEnd);
+        const bizStart = school.businessHoursStart || '09:00';
+        const bizEnd = school.businessHoursEnd || '17:00';
+        const [sh, sm] = bizStart.split(':').map(Number);
+        const [eh, em] = bizEnd.split(':').map(Number);
+
+        const availableSlots = [];
+        let current = new Date(date + `T${String(sh).padStart(2, '0')}:${String(sm).padStart(2, '0')}:00`);
+        const endTime = new Date(date + `T${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}:00`);
+
+        while (current < endTime) {
+            const slotEnd = new Date(current.getTime() + 30 * 60000);
+            if (slotEnd <= endTime) {
+                const isBooked = busySlots.some(bs => {
+                    const bsStart = new Date(bs.start || bs.startDateTime);
+                    const bsEnd = new Date(bs.end || bs.endDateTime);
+                    return current < bsEnd && slotEnd > bsStart;
+                });
+                if (!isBooked) {
+                    availableSlots.push(current.toTimeString().slice(0, 5));
+                }
+            }
+            current = new Date(current.getTime() + 30 * 60000);
+        }
+
+        const firstSlot = availableSlots[0] || null;
+        const lastSlot = availableSlots[availableSlots.length - 1] || null;
+
+        return {
+            date,
+            day_of_week: dayNames[dayOfWeek],
+            available: availableSlots.length > 0,
+            total_slots_open: availableSlots.length,
+            earliest_slot: firstSlot,
+            latest_slot: lastSlot,
+        };
+    } catch (err) {
+        console.error('[CheckAvailability] Error:', err);
+        return { error: 'Unable to check availability right now.' };
+    }
 }
 
 /**
