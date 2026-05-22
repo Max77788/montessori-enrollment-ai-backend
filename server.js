@@ -93,6 +93,9 @@ async function start() {
         const { initAlertService } = require('./src/services/alertService');
         initAlertService();
 
+        const { startHealthCheck } = require('./src/services/calendarHealthCheck');
+        startHealthCheck();
+
         app.listen(PORT, () => {
             console.log(`\n🚀 Nest Ops Backend`);
             console.log(`   Server running on http://localhost:${PORT}`);
