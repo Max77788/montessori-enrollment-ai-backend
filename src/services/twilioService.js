@@ -77,15 +77,14 @@ async function purchasePhoneNumber(opts = {}) {
 async function buyNumber(phoneNumber) {
     console.log(`[Twilio] Purchasing ${phoneNumber}...`);
 
-    const webhookUrl = process.env.TWILIO_PHONE_NUMBER_WEBHOOK_URL
+    const smsWebhookUrl = process.env.TWILIO_PHONE_NUMBER_WEBHOOK_URL
         || 'https://aifusioniqlabs.app.n8n.cloud/webhook/accept-provided-emails';
 
     const buyParams = new URLSearchParams();
     buyParams.append('PhoneNumber', phoneNumber);
-    buyParams.append('VoiceUrl', webhookUrl);
-    buyParams.append('VoiceMethod', 'POST');
-    buyParams.append('SmsUrl', webhookUrl);
+    buyParams.append('SmsUrl', smsWebhookUrl);
     buyParams.append('SmsMethod', 'POST');
+    // Voice webhook is managed by VAPI — don't set it here
 
     const buyRes = await axios.post(
         `${TWILIO_API_BASE}/Accounts/${TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json`,
@@ -95,7 +94,7 @@ async function buyNumber(phoneNumber) {
 
     const purchased = buyRes.data;
     console.log(`[Twilio] Purchased: ${purchased.phone_number} (SID: ${purchased.sid})`);
-    console.log(`[Twilio] Voice & SMS webhook set to: ${webhookUrl}`);
+    console.log(`[Twilio] SMS webhook set to: ${smsWebhookUrl}`);
 
     return {
         phoneNumber: purchased.phone_number,
