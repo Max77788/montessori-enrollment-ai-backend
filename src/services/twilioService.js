@@ -84,6 +84,8 @@ async function buyNumber(phoneNumber) {
     buyParams.append('PhoneNumber', phoneNumber);
     buyParams.append('VoiceUrl', webhookUrl);
     buyParams.append('VoiceMethod', 'POST');
+    buyParams.append('SmsUrl', webhookUrl);
+    buyParams.append('SmsMethod', 'POST');
 
     const buyRes = await axios.post(
         `${TWILIO_API_BASE}/Accounts/${TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json`,
@@ -93,7 +95,7 @@ async function buyNumber(phoneNumber) {
 
     const purchased = buyRes.data;
     console.log(`[Twilio] Purchased: ${purchased.phone_number} (SID: ${purchased.sid})`);
-    console.log(`[Twilio] Voice webhook set to: ${webhookUrl}`);
+    console.log(`[Twilio] Voice & SMS webhook set to: ${webhookUrl}`);
 
     return {
         phoneNumber: purchased.phone_number,
