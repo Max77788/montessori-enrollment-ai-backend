@@ -144,11 +144,16 @@ router.all('/availability', async (req, res) => {
         });
 
         if (error) {
-            console.log('[Availability] ❌ Error:', error);
+            console.log('[Availability] ❌ getFreeSlots error:', error);
             console.log(`[Availability] Completed in ${Date.now() - startTime}ms`);
             console.log('══════════════════════════════════════════════════════');
             return res.status(400).json({ error });
         }
+
+        console.log('[Availability] Raw free slots from getFreeSlots:', freeSlots.length);
+        freeSlots.forEach((s, i) => {
+            console.log(`[Availability]   Raw #${i + 1}: ${s.start} → ${s.end}`);
+        });
 
         // Format slots in the school's timezone
         const tz = school.timezone || 'America/Chicago';
@@ -604,14 +609,18 @@ router.post('/book-meeting', async (req, res) => {
         console.log(`[book-meeting] invitees=${(invitees || []).join(', ') || 'none'}`);
 
         // ── Check for time conflicts ──────────────────────────────────
+        console.log('[BookMeeting] Checking slot availability...');
         const { available, error: slotError } = await isSlotAvailable(schoolId, startUtc, endUtc);
+        console.log('[BookMeeting] Slot check:', { available, conflictError: slotError || 'none' });
         if (!available) {
+            console.log('[BookMeeting] ❌ Slot conflicted:', slotError);
             return res.status(409).json({
                 success: false,
                 error: slotError || 'This time slot conflicts with an existing booking.',
                 conflicting: true
             });
         }
+        console.log('[BookMeeting] ✅ Slot is free');
 
         // ── Create calendar event(s) ──────────────────────────────────
         const inviteesList = Array.isArray(invitees) ? invitees : (invitees ? [invitees] : []);
