@@ -230,22 +230,34 @@ async function handleGetBookedSlots(args) {
  * Uses the same calendar logic as get_booked_slots but returns a simpler yes/no answer.
  */
 async function handleAvailabilityCheck(args) {
+    console.log('[CheckAvailability] ──────── Called ────────');
+    console.log('[CheckAvailability] Args:', JSON.stringify(args));
+
     const { date } = args;
-    if (!date) return { error: 'Date is required (YYYY-MM-DD)' };
+    if (!date) {
+        console.log('[CheckAvailability] ❌ Missing date');
+        return { error: 'Date is required (YYYY-MM-DD)' };
+    }
 
     try {
         const School = require('../models/School');
         const { getBusySlots } = require('../services/calendarService');
 
         const school = await School.findOne({ status: 'active' }).lean();
-        if (!school) return { error: 'No active school found' };
+        if (!school) {
+            console.log('[CheckAvailability] ❌ No active school found');
+            return { error: 'No active school found' };
+        }
+        console.log('[CheckAvailability] School:', school.name, '| Biz hours:', school.businessHoursStart, '-', school.businessHoursEnd);
 
         const dayStart = new Date(date + 'T00:00:00');
         const dayEnd = new Date(date + 'T23:59:59');
         const dayOfWeek = new Date(date + 'T12:00:00').getDay();
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        console.log('[CheckAvailability] Date:', date, '| Day:', dayNames[dayOfWeek]);
 
         if (dayOfWeek === 0 || dayOfWeek === 6) {
+            console.log('[CheckAvailability] ❌ Weekend — no tours');
             return {
                 date,
                 day_of_week: dayNames[dayOfWeek],
@@ -254,7 +266,15 @@ async function handleAvailabilityCheck(args) {
             };
         }
 
+        console.log('[CheckAvailability] Fetching busy slots...');
         const busySlots = await getBusySlots(school._id, dayStart, dayEnd);
+        console.log('[CheckAvailability] Busy slots found:', busySlots.length);
+        if (busySlots.length > 0) {
+            busySlots.forEach((bs, i) => {
+                console.log(`[CheckAvailability]   Busy #${i + 1}:`, bs.start || bs.startDateTime, '→', bs.end || bs.endDateTime);
+            });
+        }
+
         const bizStart = school.businessHoursStart || '09:00';
         const bizEnd = school.businessHoursEnd || '17:00';
         const [sh, sm] = bizStart.split(':').map(Number);
@@ -281,6 +301,7 @@ async function handleAvailabilityCheck(args) {
 
         const firstSlot = availableSlots[0] || null;
         const lastSlot = availableSlots[availableSlots.length - 1] || null;
+        console.log('[CheckAvailability] ✅ Available:', availableSlots.length, 'slots | First:', firstSlot, '| Last:', lastSlot);
 
         return {
             date,
@@ -291,7 +312,8 @@ async function handleAvailabilityCheck(args) {
             latest_slot: lastSlot,
         };
     } catch (err) {
-        console.error('[CheckAvailability] Error:', err);
+        console.error('[CheckAvailability] ❌ Error:', err.message);
+        console.error('[CheckAvailability] Stack:', err.stack?.split('\n').slice(0, 3).join('\n'));
         return { error: 'Unable to check availability right now.' };
     }
 }
@@ -301,20 +323,27 @@ async function handleAvailabilityCheck(args) {
  * This is called by the VAPI assistant when the parent confirms all details.
  */
 async function handleAppointmentBooking(payload, args) {
+    console.log('[BookAppointment] ──────── Called ────────');
+    console.log('[BookAppointment] Args:', JSON.stringify(args));
+
     const {
         date, time, parent_name, parent_phone, parent_email,
         child_name, child_age, reason
     } = args;
 
     if (!date || !time || !parent_name) {
+        console.log('[BookAppointment] ❌ Missing required fields:', { date: !!date, time: !!time, parent_name: !!parent_name });
         return { success: false, error: 'Missing required fields. Need date, time, and parent name.' };
     }
 
     // Find school from assistant metadata
+    console.log('[BookAppointment] Payload assistant metadata:', JSON.stringify(payload?.message?.assistant?.metadata || {}).slice(0, 300));
     const schoolId = payload?.message?.assistant?.metadata?.schoolId;
     if (!schoolId) {
+        console.log('[BookAppointment] ❌ No schoolId in assistant metadata');
         return { success: false, error: 'School not identified. Please try again.' };
     }
+    console.log('[BookAppointment] School ID:', schoolId);
 
     try {
         // Parse date/time into UTC
@@ -322,15 +351,22 @@ async function handleAppointmentBooking(payload, args) {
         const start = parseLocalDateTimeToUTC(localDateTime.toISOString(), 'America/Chicago')
             || localDateTime;
 
+        console.log('[BookAppointment] Parsed date/time:', { input: `${date}T${time}:00`, startUTC: start.toISOString() });
+
         if (isNaN(start.getTime())) {
+            console.log('[BookAppointment] ❌ Invalid date/time');
             return { success: false, error: 'Invalid date or time format.' };
         }
 
         const end = new Date(start.getTime() + 30 * 60 * 1000);
+        console.log('[BookAppointment] Slot:', start.toISOString(), '→', end.toISOString());
 
         // Check availability
+        console.log('[BookAppointment] Checking slot availability...');
         const { available, error: slotError } = await isSlotAvailable(schoolId, start, end);
+        console.log('[BookAppointment] Availability check:', { available, slotError });
         if (!available) {
+            console.log('[BookAppointment] ❌ Slot not available:', slotError);
             return { success: false, error: slotError || 'That time slot is no longer available.' };
         }
 
@@ -338,6 +374,7 @@ async function handleAppointmentBooking(payload, args) {
         const title = `School Tour – ${parent_name}`;
         const description = `Tour for ${parent_name}. Phone: ${parent_phone || 'N/A'}. Email: ${parent_email || 'N/A'}. Child: ${child_name || 'N/A'} (${child_age || 'N/A'}). Reason: ${reason || 'Inquiry'}.`;
 
+        console.log('[BookAppointment] Creating calendar event...');
         const calResult = await createCalendarEvent(schoolId, {
             title,
             startDateTime: start,
@@ -345,8 +382,10 @@ async function handleAppointmentBooking(payload, args) {
             description,
             parentEmail: parent_email || undefined,
         });
+        console.log('[BookAppointment] Calendar result:', JSON.stringify(calResult).slice(0, 300));
 
         // Create tour booking record
+        console.log('[BookAppointment] Creating TourBooking record...');
         const tourBooking = await TourBooking.create({
             schoolId,
             parentName: parent_name,
@@ -360,16 +399,18 @@ async function handleAppointmentBooking(payload, args) {
             calendarProvider: calResult.success ? calResult.provider : '',
             calendarEmail: calResult.success ? calResult.email : '',
         });
+        console.log('[BookAppointment] TourBooking created:', tourBooking._id.toString());
 
         // Send confirmation email
         if (parent_email) {
             const { sendTourConfirmation } = require('../services/automation');
+            console.log('[BookAppointment] Sending confirmation email to:', parent_email);
             sendTourConfirmation(schoolId, tourBooking).catch(err =>
-                console.error('[VAPI Tool] Confirmation email error:', err.message)
+                console.error('[BookAppointment] Confirmation email error:', err.message)
             );
         }
 
-        console.log(`[VAPI Tool] Tour booked: ${parent_name} on ${date} at ${time}`);
+        console.log(`[BookAppointment] ✅ Tour booked: ${parent_name} on ${date} at ${time}`);
         return {
             success: true,
             message: `Tour booked for ${parent_name} on ${date} at ${time}. A confirmation email will be sent.`,
@@ -378,7 +419,8 @@ async function handleAppointmentBooking(payload, args) {
         };
 
     } catch (err) {
-        console.error('[VAPI Tool] Booking error:', err);
+        console.error('[BookAppointment] ❌ Error:', err.message);
+        console.error('[BookAppointment] Stack:', err.stack?.split('\n').slice(0, 5).join('\n'));
         return { success: false, error: 'Unable to complete booking. Please try again.' };
     }
 }
