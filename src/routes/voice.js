@@ -541,12 +541,13 @@ router.post('/vapi-book', async (req, res) => {
 router.post('/book-meeting', async (req, res) => {
     const reqStartTime = Date.now();
 
+    const body = req.body || {};
     const {
         schoolId: bodySchoolId,
         title,
         invitees,
-        startDate,
-        startTime,
+        startDate: bodyStartDate,
+        startTime: bodyStartTime,
         timezone,
         durationMinutes,
         description,
@@ -555,9 +556,12 @@ router.post('/book-meeting', async (req, res) => {
         parentEmail,
         childName,
         childAge,
-    } = req.body;
+    } = body;
     // URL query param (injected by VAPI template) wins over body to prevent AI hallucinations
     const schoolId = req.query.schoolId || bodySchoolId;
+    // VAPI may send date/time under different keys; normalize both camelCase and snake_case
+    const startDate = bodyStartDate || body.date || body.start_date || '';
+    const startTime = bodyStartTime || body.time || body.start_time || '';
 
     console.log('══════════════════════════════════════════════════════');
     console.log('[BookMeeting] POST /api/voice/book-meeting');
@@ -570,6 +574,7 @@ router.post('/book-meeting', async (req, res) => {
         parentName, parentPhone, parentEmail, childName, childAge,
         description: description ? description.slice(0, 100) + '...' : 'N/A'
     }));
+    console.log('[BookMeeting] Normalized date/time:', { startDate, startTime });
     console.log('[BookMeeting] Headers:', JSON.stringify({ host: req.get('host'), origin: req.get('origin'), 'user-agent': req.get('user-agent') }));
 
     try {

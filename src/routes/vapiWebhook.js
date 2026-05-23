@@ -66,7 +66,7 @@ router.post('/vapi', async (req, res) => {
             console.error('[VAPI Webhook] Async processing error:', err);
         });
     } else if (msgType === 'status-update') {
-        console.log(`[VAPI Webhook] Call status: ${payload.message?.status || 'unknown'}`);
+        // Quiet — status updates are too noisy
     } else if (msgType === 'transcript') {
         // Streaming transcripts are informational — no action needed
     }

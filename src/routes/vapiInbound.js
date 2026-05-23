@@ -257,7 +257,9 @@ router.post('/webhook', async (req, res) => {
 
     const msgType = payload?.message?.type || 'unknown';
     const callId = payload?.message?.call?.id || 'unknown';
-    if (msgType !== 'transcript') {
+    // Spam guard: skip noisy event types
+    const quietTypes = ['transcript', 'status-update'];
+    if (!quietTypes.includes(msgType)) {
         console.log(`[VAPI Webhook] Received: type=${msgType} callId=${callId}`);
     }
 
