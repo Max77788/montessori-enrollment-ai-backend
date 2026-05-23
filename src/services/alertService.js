@@ -2,26 +2,21 @@
  * Alert Service — monitors platform health and sends notifications on critical events.
  *
  * Monitors:
- *   1. Calendar disconnection — polls Integration.connected status
- *   2. Server overload — monitors memory/CPU thresholds
- *   3. Booking rate drops to zero — checks TourBooking creation rate in rolling window
+ *   1. Server overload — monitors memory/CPU thresholds
+ *   2. Booking rate drops to zero — checks TourBooking creation rate in rolling window
  *
  * Each alert includes: what broke, which school, timestamp.
  */
 
 const os = require('os');
-const Integration = require('../models/Integration');
 const School = require('../models/School');
 const TourBooking = require('../models/TourBooking');
 const { sendEmail } = require('./mailService');
 
 // ── Configurable thresholds ──────────────────────────────────────────────
 const CONFIG = {
-    // How often to run health checks (ms). Default: every 5 minutes.
-    CHECK_INTERVAL_MS: parseInt(process.env.ALERT_CHECK_INTERVAL_MS || '300000', 10),
-
-    // Calendar: fire alert if disconnected for this many consecutive checks
-    CALENDAR_DISCONNECT_CONSECUTIVE_CHECKS: 2,
+    // How often to run health checks (ms). Default: every 1 hour.
+    CHECK_INTERVAL_MS: parseInt(process.env.ALERT_CHECK_INTERVAL_MS || '3600000', 10),
 
     // Memory: fire alert if heap used % exceeds this
     MEMORY_HEAP_THRESHOLD_PERCENT: 85,
@@ -42,9 +37,6 @@ const CONFIG = {
 
 // ── State tracking ────────────────────────────────────────────────────────
 let checkInterval = null;
-
-// Track consecutive disconnection counts per school (schoolId -> count)
-const disconnectCounts = new Map();
 
 // Track last alert time per school per alert type to avoid spam
 const lastAlertTime = new Map(); // key: `${schoolId}:${alertType}` -> timestamp
@@ -136,94 +128,7 @@ async function dispatchAlert(title, body, schoolId = null) {
     }
 }
 
-// ── Check 1: Calendar disconnection ───────────────────────────────────────
-
-async function checkCalendarConnections() {
-    try {
-        const integrations = await Integration.find({
-            connected: false,
-            type: { $in: ['google', 'outlook'] }
-        }).lean();
-
-        // Also re-check "connected" integrations that might have stale tokens
-        const connectedIntegrations = await Integration.find({
-            connected: true,
-            type: { $in: ['google', 'outlook'] }
-        }).lean();
-
-        for (const integration of connectedIntegrations) {
-            let isEffectivelyDisconnected = false;
-
-            if (integration.type === 'google') {
-                if (!integration.config?.tokens?.access_token) {
-                    isEffectivelyDisconnected = true;
-                }
-            } else if (integration.type === 'outlook') {
-                if (!integration.config?.accessToken && !integration.config?.msalCache) {
-                    isEffectivelyDisconnected = true;
-                }
-            }
-
-            if (isEffectivelyDisconnected) {
-                integrations.push(integration);
-            }
-        }
-
-        // Group by school (only alert for integrations that were previously connected)
-        const bySchool = new Map();
-        for (const integration of integrations) {
-            // Skip integrations that were never successfully connected (no connectedAt)
-            if (!integration.connectedAt) continue;
-            const sid = integration.schoolId.toString();
-            if (!bySchool.has(sid)) bySchool.set(sid, []);
-            bySchool.get(sid).push(integration);
-        }
-
-        for (const [schoolId, schoolIntegrations] of bySchool) {
-            const prevCount = disconnectCounts.get(schoolId) || 0;
-            const newCount = prevCount + 1;
-            disconnectCounts.set(schoolId, newCount);
-
-            if (newCount >= CONFIG.CALENDAR_DISCONNECT_CONSECUTIVE_CHECKS) {
-                if (shouldSendAlert(schoolId, 'calendar_disconnect')) {
-                    const school = await School.findById(schoolId).select('name').lean();
-                    const schoolName = school?.name || 'Unknown School';
-                    const types = schoolIntegrations.map(i => i.type).join(', ');
-
-                    await dispatchAlert(
-                        `Calendar Disconnected — ${schoolName}`,
-                        `School: ${schoolName} (${schoolId})\n` +
-                        `Disconnected providers: ${types}\n` +
-                        `Detected at: ${new Date().toISOString()}\n` +
-                        `Consecutive checks: ${newCount}\n\n` +
-                        `Action required: Reconnect calendar in Integrations settings.`,
-                        schoolId
-                    );
-                    recordAlertSent(schoolId, 'calendar_disconnect');
-                }
-            }
-        }
-
-        // Reset counters for schools that are now connected
-        const connectedSchoolIds = new Set();
-        const allConnected = await Integration.find({
-            connected: true,
-            type: { $in: ['google', 'outlook'] }
-        }).select('schoolId').lean();
-        allConnected.forEach(i => connectedSchoolIds.add(i.schoolId.toString()));
-
-        for (const [schoolId] of disconnectCounts) {
-            if (!bySchool.has(schoolId) && connectedSchoolIds.has(schoolId)) {
-                disconnectCounts.delete(schoolId);
-                console.log(`[AlertService] Calendar reconnected for school ${schoolId} — counter reset`);
-            }
-        }
-    } catch (err) {
-        console.error('[AlertService] checkCalendarConnections error:', err.message);
-    }
-}
-
-// ── Check 2: Server resource overload ────────────────────────────────────
+// ── Check 1: Server resource overload ────────────────────────────────────
 
 async function checkServerResources() {
     try {
@@ -273,7 +178,7 @@ async function checkServerResources() {
     }
 }
 
-// ── Check 3: Booking rate drops to zero ───────────────────────────────────
+// ── Check 2: Booking rate drops to zero ───────────────────────────────────
 
 async function checkBookingRate() {
     try {
@@ -327,7 +232,6 @@ async function checkBookingRate() {
 async function runAllChecks() {
     console.log('[AlertService] Running health checks...');
     await Promise.allSettled([
-        checkCalendarConnections(),
         checkServerResources(),
         checkBookingRate(),
     ]);
