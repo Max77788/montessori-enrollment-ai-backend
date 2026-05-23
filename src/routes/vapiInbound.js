@@ -150,7 +150,6 @@ router.post('/assistant-request', async (req, res) => {
                     variableValues: {
                         school_id: school._id.toString(),
                         school_name: school.name,
-                        backend_url: cleanBaseUrl,
                         knowledge_base: kb,
                         customer_number: customerNumber || '',
                         calendar_provider: calendarProvider,
