@@ -299,7 +299,7 @@ async function getFreeSlots(schoolId, dateStr, businessHours = { start: '09:00',
  * @returns {Promise<{ success: boolean, eventId?: string, provider?: 'google'|'outlook', error?: string }>}
  */
 async function createCalendarEvent(schoolId, opts) {
-    const { title, startDateTime, endDateTime, description, parentEmail, parentPhone } = opts;
+    const { title, startDateTime, endDateTime, description, parentEmail, parentPhone, location } = opts;
     const start = startDateTime instanceof Date ? startDateTime : new Date(startDateTime);
     const end = endDateTime instanceof Date ? endDateTime : new Date(endDateTime);
 
@@ -411,9 +411,9 @@ async function createCalendarEvent(schoolId, opts) {
         let result;
         console.log(`[Calendar] Attempting ${integration.type} event creation...`);
         if (integration.type === 'google') {
-            result = await createGoogleCalendarEvent(integration, { title, start, end, description: enrichedDescription, parentEmail, parentPhone });
+            result = await createGoogleCalendarEvent(integration, { title, start, end, description: enrichedDescription, parentEmail, parentPhone, location });
         } else if (integration.type === 'outlook') {
-            result = await createOutlookCalendarEvent(integration, { title, start, end, description: enrichedDescription, parentEmail, parentPhone });
+            result = await createOutlookCalendarEvent(integration, { title, start, end, description: enrichedDescription, parentEmail, parentPhone, location });
         }
 
         if (result && result.success) {
@@ -441,7 +441,7 @@ async function createCalendarEvent(schoolId, opts) {
     }
 }
 
-async function createGoogleCalendarEvent(integration, { title, start, end, description, parentEmail, parentPhone }) {
+async function createGoogleCalendarEvent(integration, { title, start, end, description, parentEmail, parentPhone, location }) {
     try {
         const oauth2Client = createGoogleOAuthClient();
         const tokens = integration.config?.tokens;
@@ -481,6 +481,7 @@ async function createGoogleCalendarEvent(integration, { title, start, end, descr
         const event = {
             summary: title,
             description: description || '',
+            location: location || '',
             start: { dateTime: formatInTimezone(start, tz), timeZone: tz },
             end: { dateTime: formatInTimezone(end, tz), timeZone: tz },
             attendees,
@@ -504,7 +505,7 @@ async function createGoogleCalendarEvent(integration, { title, start, end, descr
     }
 }
 
-async function createOutlookCalendarEvent(integration, { title, start, end, description, parentEmail, parentPhone }) {
+async function createOutlookCalendarEvent(integration, { title, start, end, description, parentEmail, parentPhone, location }) {
     try {
         console.log(`[Calendar:Outlook] Starting event creation...`);
         console.log(`[Calendar:Outlook] Integration schoolId=${integration.schoolId}, hasAccessToken=${!!integration.config?.accessToken}, hasMsalCache=${!!integration.config?.msalCache}`);
@@ -536,6 +537,7 @@ async function createOutlookCalendarEvent(integration, { title, start, end, desc
         const event = {
             subject: title,
             body: { contentType: 'text', content: description || '' },
+            location: { displayName: location || '' },
             start: { dateTime: formatInTimezone(start, tz), timeZone: tz },
             end: { dateTime: formatInTimezone(end, tz), timeZone: tz },
             attendees,

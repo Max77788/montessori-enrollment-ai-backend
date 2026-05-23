@@ -437,7 +437,7 @@ async function createTourBookingFromWebhook(webhook, aiResult) {
         }
 
         // Get school name and preferred calendar for event title
-        const school = await School.findById(schoolId).select('name preferredCalendar').lean();
+        const school = await School.findById(schoolId).select('name preferredCalendar address').lean();
         const title = `School Tour – ${parentName}`;
         const description = `Tour for ${parentName}. Phone: ${phone || 'N/A'}. Email: ${extracted.email || 'N/A'}. Reason: ${extracted.notes || 'Inquiry'}.${extracted.notes ? ` Notes: ${extracted.notes}` : ''}`;
 
@@ -471,6 +471,7 @@ async function createTourBookingFromWebhook(webhook, aiResult) {
             description,
             parentEmail: parentEmail || undefined,
             parentPhone: phone || undefined,
+            location: school.address || '',
         });
 
         console.log(`[Webhook Booking] Calendar event creation result:`, JSON.stringify(calResult, null, 2));

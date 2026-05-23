@@ -269,7 +269,7 @@ router.post('/call-end', async (req, res) => {
             return res.status(400).json({ error: 'schoolId is required' });
         }
 
-        const school = await School.findById(schoolId).select('name adminEmail emailAutoFollowup emailTemplate').lean();
+        const school = await School.findById(schoolId).select('name adminEmail emailAutoFollowup emailTemplate address').lean();
         if (!school) {
             return res.status(404).json({ error: 'School not found' });
         }
@@ -324,6 +324,7 @@ router.post('/call-end', async (req, res) => {
                             description: `Tour for ${parentName || 'Parent'}. Phone: ${phone || 'N/A'}. Email: ${email || 'N/A'}. Reason: ${reason || 'Inquiry'}.`,
                             parentEmail: email || null,
                             parentPhone: phone || undefined,
+                            location: school.address || '',
                         });
                         tourBooking = await TourBooking.create({
                             schoolId,
@@ -439,6 +440,9 @@ router.post('/vapi-book', async (req, res) => {
             });
         }
 
+        // Fetch school for address
+        const school = await School.findById(effectiveSchoolId).select('name address').lean();
+
         // Create calendar event
         const title = `School Tour – ${parent_name}`;
         const description = [
@@ -456,6 +460,7 @@ router.post('/vapi-book', async (req, res) => {
             description,
             parentEmail: parent_email || undefined,
             parentPhone: parent_phone || undefined,
+            location: school?.address || '',
         });
 
         // Create tour booking record
@@ -662,6 +667,7 @@ router.post('/book-meeting', async (req, res) => {
             description: fullDescription,
             parentEmail: effectiveParentEmail || undefined,
             parentPhone: parentPhone || undefined,
+            location: school.address || '',
         };
 
         // Fetch preferred calendar and connected integrations

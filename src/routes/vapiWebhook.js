@@ -398,6 +398,7 @@ async function handleAppointmentBooking(payload, args) {
             description,
             parentEmail: parent_email || undefined,
             parentPhone: parent_phone || undefined,
+            location: school.address || '',
         });
         console.log('[BookAppointment] Calendar result:', JSON.stringify(calResult).slice(0, 300));
 

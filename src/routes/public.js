@@ -161,7 +161,7 @@ router.post('/book-tour/:schoolId', async (req, res) => {
         if (!mongoose.Types.ObjectId.isValid(schoolId)) {
             return res.status(400).json({ error: 'Invalid school ID' });
         }
-        const school = await School.findById(schoolId).select('name').lean();
+        const school = await School.findById(schoolId).select('name address').lean();
         if (!school) return res.status(404).json({ error: 'School not found' });
 
         const { parentName, email, phone, childAge, childName, reason, scheduledAt } = req.body || {};
@@ -195,6 +195,7 @@ router.post('/book-tour/:schoolId', async (req, res) => {
             description: `Tour for ${parentName.trim()}. Phone: ${phone || 'N/A'}. Email: ${email || 'N/A'}. Reason: ${reason || 'Inquiry'}.`,
             parentEmail: email || undefined,
             parentPhone: phone || undefined,
+            location: school.address || '',
         });
 
         const booking = await TourBooking.create({
