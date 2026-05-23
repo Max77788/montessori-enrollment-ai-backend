@@ -547,6 +547,7 @@ router.post('/book-meeting', async (req, res) => {
         description,
         parentName,
         parentPhone,
+        parentEmail,
         childName,
         childAge,
     } = req.body;
@@ -561,7 +562,7 @@ router.post('/book-meeting', async (req, res) => {
     console.log('[BookMeeting] Effective schoolId:', schoolId || 'MISSING');
     console.log('[BookMeeting] Body:', JSON.stringify({
         title, invitees, startDate, startTime, timezone, durationMinutes,
-        parentName, parentPhone, childName, childAge,
+        parentName, parentPhone, parentEmail, childName, childAge,
         description: description ? description.slice(0, 100) + '...' : 'N/A'
     }));
     console.log('[BookMeeting] Headers:', JSON.stringify({ host: req.get('host'), origin: req.get('origin'), 'user-agent': req.get('user-agent') }));
@@ -622,7 +623,7 @@ router.post('/book-meeting', async (req, res) => {
 
         console.log(`[book-meeting] schoolId=${schoolId} title="${title}"`);
         console.log(`[book-meeting] local=${startDate} ${startTime} ${tz} → UTC start=${startUtc.toISOString()} end=${endUtc.toISOString()}`);
-        console.log(`[book-meeting] invitees=${(invitees || []).join(', ') || 'none'}`);
+        console.log(`[book-meeting] parentEmail=${parentEmail || 'none'} invitees=${(invitees || []).join(', ') || 'none'}`);
 
         // ── Check for time conflicts ──────────────────────────────────
         console.log('[BookMeeting] Checking slot availability...');
@@ -642,10 +643,14 @@ router.post('/book-meeting', async (req, res) => {
         const inviteesList = Array.isArray(invitees) ? invitees : (invitees ? [invitees] : []);
         const primaryInvitee = inviteesList[0] || null;
 
+        // Determine parent email: VAPI parentEmail param wins over invitees list
+        const effectiveParentEmail = parentEmail || primaryInvitee || null;
+
         const fullDescription = description ||
             `${title}\n` +
             (parentName ? `Parent: ${parentName}\n` : '') +
             (parentPhone ? `Phone: ${parentPhone}\n` : '') +
+            (effectiveParentEmail ? `Email: ${effectiveParentEmail}\n` : '') +
             (childName ? `Child: ${childName} (${childAge || 'N/A'})\n` : '') +
             `School: ${school.name}`;
 
@@ -655,7 +660,7 @@ router.post('/book-meeting', async (req, res) => {
             startDateTime: startUtc,
             endDateTime: endUtc,
             description: fullDescription,
-            parentEmail: primaryInvitee,
+            parentEmail: effectiveParentEmail || undefined,
             parentPhone: parentPhone || undefined,
         };
 
@@ -680,7 +685,7 @@ router.post('/book-meeting', async (req, res) => {
             schoolId,
             parentName: parentName || 'Guest',
             phone: parentPhone || '',
-            email: primaryInvitee || '',
+            email: effectiveParentEmail || '',
             childName: childName || '',
             childAge: childAge || '',
             reason: 'AI Agent booking',
@@ -698,7 +703,7 @@ router.post('/book-meeting', async (req, res) => {
             const { generateICS } = require('../utils/ics');
 
             for (const invitee of inviteesList) {
-                if (!invitee || invitee === primaryInvitee) continue; // primary already invited via calendar API
+                if (!invitee || invitee === effectiveParentEmail) continue; // primary already invited via calendar API
 
                 try {
                     const icsContent = generateICS({
