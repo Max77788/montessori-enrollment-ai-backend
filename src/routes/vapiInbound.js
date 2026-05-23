@@ -228,6 +228,7 @@ router.post('/assistant-request', async (req, res) => {
         console.log('[VAPI →]   school_name:', response.assistantOverrides.variableValues.school_name);
         console.log('[VAPI →]   backend_url:', response.assistantOverrides.variableValues.backend_url);
         console.log('[VAPI →]   knowledge_base:', response.assistantOverrides.variableValues.knowledge_base.length, 'chars');
+        console.log('[VAPI →] FULL RESPONSE OBJECT:', JSON.stringify(response, null, 2));
         console.log(`[VAPI →] Completed in ${Date.now() - startTime}ms`);
         console.log('══════════════════════════════════════════════════════');
         return res.json(response);
@@ -257,7 +258,9 @@ router.post('/webhook', async (req, res) => {
 
     const msgType = payload?.message?.type || 'unknown';
     const callId = payload?.message?.call?.id || 'unknown';
-    console.log(`[VAPI Webhook] Received: type=${msgType} callId=${callId}`);
+    if (msgType !== 'transcript') {
+        console.log(`[VAPI Webhook] Received: type=${msgType} callId=${callId}`);
+    }
 
     // Immediately acknowledge
     res.status(200).json({ status: 'received' });

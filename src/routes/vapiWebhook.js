@@ -48,7 +48,9 @@ router.post('/vapi', async (req, res) => {
     }
 
     const msgType = payload?.message?.type || 'unknown';
-    console.log(`[VAPI Webhook] Received: type=${msgType}`);
+    if (msgType !== 'transcript') {
+        console.log(`[VAPI Webhook] Received: type=${msgType}`);
+    }
 
     // Handle tool-calls synchronously (VAPI waits for response)
     if (msgType === 'tool-calls') {
@@ -100,7 +102,7 @@ async function handleToolCalls(payload, res) {
                         break;
                     }
                     case 'get_booked_slots': {
-                        result = await handleGetBookedSlots(args);
+                        result = await handleGetBookedSlots(payload, args);
                         break;
                     }
                     case 'book_appointment': {
@@ -108,7 +110,7 @@ async function handleToolCalls(payload, res) {
                         break;
                     }
                     case 'check_availability': {
-                        result = await handleAvailabilityCheck(args);
+                        result = await handleAvailabilityCheck(payload, args);
                         break;
                     }
                     case 'get_school_info': {
@@ -169,7 +171,7 @@ function handleCurrentDatetimeCST() {
 /**
  * Tool: Get booked slots for a given date.
  */
-async function handleGetBookedSlots(args) {
+async function handleGetBookedSlots(payload, args) {
     const { date } = args;
     if (!date) return { error: 'Date is required (YYYY-MM-DD)' };
 
@@ -177,7 +179,14 @@ async function handleGetBookedSlots(args) {
         const School = require('../models/School');
         const { getBusySlots } = require('../services/calendarService');
 
-        const school = await School.findOne({ status: 'active' }).lean();
+        const schoolId = payload?.message?.assistant?.metadata?.schoolId;
+        let school = null;
+        if (schoolId && mongoose.Types.ObjectId.isValid(schoolId)) {
+            school = await School.findById(schoolId).lean();
+        }
+        if (!school) {
+            school = await School.findOne({ status: 'active' }).lean();
+        }
         if (!school) return { error: 'No active school found' };
 
         const dayStart = new Date(date + 'T00:00:00');
@@ -229,7 +238,7 @@ async function handleGetBookedSlots(args) {
  * Tool: Check tour availability for a given date.
  * Uses the same calendar logic as get_booked_slots but returns a simpler yes/no answer.
  */
-async function handleAvailabilityCheck(args) {
+async function handleAvailabilityCheck(payload, args) {
     console.log('[CheckAvailability] ──────── Called ────────');
     console.log('[CheckAvailability] Args:', JSON.stringify(args));
 
@@ -243,7 +252,14 @@ async function handleAvailabilityCheck(args) {
         const School = require('../models/School');
         const { getBusySlots } = require('../services/calendarService');
 
-        const school = await School.findOne({ status: 'active' }).lean();
+        const schoolId = payload?.message?.assistant?.metadata?.schoolId;
+        let school = null;
+        if (schoolId && mongoose.Types.ObjectId.isValid(schoolId)) {
+            school = await School.findById(schoolId).lean();
+        }
+        if (!school) {
+            school = await School.findOne({ status: 'active' }).lean();
+        }
         if (!school) {
             console.log('[CheckAvailability] ❌ No active school found');
             return { error: 'No active school found' };

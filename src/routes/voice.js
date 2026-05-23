@@ -128,6 +128,11 @@ router.all('/availability', async (req, res) => {
             return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD' });
         }
 
+        if (!mongoose.Types.ObjectId.isValid(schoolId)) {
+            console.log(`[Availability] ❌ Invalid schoolId format: "${schoolId}"`);
+            return res.status(400).json({ error: `Invalid schoolId: "${schoolId}". Expected a valid MongoDB ObjectId.` });
+        }
+
         const school = await School.findById(schoolId).select('name businessHoursStart businessHoursEnd timezone').lean();
         if (!school) {
             console.log('[Availability] ❌ School not found:', schoolId);
@@ -530,7 +535,7 @@ router.post('/book-meeting', async (req, res) => {
     const reqStartTime = Date.now();
 
     const {
-        schoolId,
+        schoolId: bodySchoolId,
         title,
         invitees,
         startDate,
@@ -543,12 +548,17 @@ router.post('/book-meeting', async (req, res) => {
         childName,
         childAge,
     } = req.body;
+    // URL query param (injected by VAPI template) wins over body to prevent AI hallucinations
+    const schoolId = req.query.schoolId || bodySchoolId;
 
     console.log('══════════════════════════════════════════════════════');
     console.log('[BookMeeting] POST /api/voice/book-meeting');
     console.log('[BookMeeting] Timestamp:', new Date().toISOString());
+    console.log('[BookMeeting] Query schoolId:', req.query.schoolId || 'none');
+    console.log('[BookMeeting] Body schoolId:', bodySchoolId || 'none');
+    console.log('[BookMeeting] Effective schoolId:', schoolId || 'MISSING');
     console.log('[BookMeeting] Body:', JSON.stringify({
-        schoolId, title, invitees, startDate, startTime, timezone, durationMinutes,
+        title, invitees, startDate, startTime, timezone, durationMinutes,
         parentName, parentPhone, childName, childAge,
         description: description ? description.slice(0, 100) + '...' : 'N/A'
     }));
@@ -559,6 +569,10 @@ router.post('/book-meeting', async (req, res) => {
         if (!schoolId) {
             console.log('[BookMeeting] ❌ Missing schoolId');
             return res.status(400).json({ success: false, error: 'schoolId is required.' });
+        }
+        if (!mongoose.Types.ObjectId.isValid(schoolId)) {
+            console.log(`[BookMeeting] ❌ Invalid schoolId format: "${schoolId}"`);
+            return res.status(400).json({ success: false, error: `Invalid schoolId: "${schoolId}". Expected a valid MongoDB ObjectId.` });
         }
         if (!title) {
             console.log('[BookMeeting] ❌ Missing title');
