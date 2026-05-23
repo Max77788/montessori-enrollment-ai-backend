@@ -158,7 +158,7 @@ router.post('/assistant-request', async (req, res) => {
                         business_hours_end: school.businessHoursEnd || '17:00',
                         school_address: school.address || '',
                         tour_booking_link: tourBookingLink || '[not provided]',
-                        is_human_transfer: (humanTransferEnabled && transferNumber) ? 'true' : 'false',
+                        is_human_transfer: !!(humanTransferEnabled && transferNumber),
                     }
                 }
             };
