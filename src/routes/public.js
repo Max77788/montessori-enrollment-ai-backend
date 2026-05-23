@@ -193,6 +193,8 @@ router.post('/book-tour/:schoolId', async (req, res) => {
             startDateTime: start,
             endDateTime: end,
             description: `Tour for ${parentName.trim()}. Phone: ${phone || 'N/A'}. Email: ${email || 'N/A'}. Reason: ${reason || 'Inquiry'}.`,
+            parentEmail: email || undefined,
+            parentPhone: phone || undefined,
         });
 
         const booking = await TourBooking.create({

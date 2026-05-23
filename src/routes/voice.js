@@ -323,6 +323,7 @@ router.post('/call-end', async (req, res) => {
                             endDateTime: end,
                             description: `Tour for ${parentName || 'Parent'}. Phone: ${phone || 'N/A'}. Email: ${email || 'N/A'}. Reason: ${reason || 'Inquiry'}.`,
                             parentEmail: email || null,
+                            parentPhone: phone || undefined,
                         });
                         tourBooking = await TourBooking.create({
                             schoolId,
@@ -454,6 +455,7 @@ router.post('/vapi-book', async (req, res) => {
             endDateTime: end,
             description,
             parentEmail: parent_email || undefined,
+            parentPhone: parent_phone || undefined,
         });
 
         // Create tour booking record
@@ -654,6 +656,7 @@ router.post('/book-meeting', async (req, res) => {
             endDateTime: endUtc,
             description: fullDescription,
             parentEmail: primaryInvitee,
+            parentPhone: parentPhone || undefined,
         };
 
         // Fetch preferred calendar and connected integrations

@@ -299,13 +299,21 @@ async function getFreeSlots(schoolId, dateStr, businessHours = { start: '09:00',
  * @returns {Promise<{ success: boolean, eventId?: string, provider?: 'google'|'outlook', error?: string }>}
  */
 async function createCalendarEvent(schoolId, opts) {
-    const { title, startDateTime, endDateTime, description, parentEmail } = opts;
+    const { title, startDateTime, endDateTime, description, parentEmail, parentPhone } = opts;
     const start = startDateTime instanceof Date ? startDateTime : new Date(startDateTime);
     const end = endDateTime instanceof Date ? endDateTime : new Date(endDateTime);
 
     if (!title || !start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
         console.error('[Calendar] INVALID PARAMS:', { title, start, end });
         return { success: false, error: 'Invalid title or date range' };
+    }
+
+    // Ensure parent email is always included in the description
+    let enrichedDescription = description || '';
+    if (parentEmail && !enrichedDescription.toLowerCase().includes(parentEmail.toLowerCase())) {
+        enrichedDescription = enrichedDescription
+            ? `${enrichedDescription}\nEmail: ${parentEmail}`
+            : `Email: ${parentEmail}`;
     }
 
     const School = require('../models/School');
@@ -403,9 +411,9 @@ async function createCalendarEvent(schoolId, opts) {
         let result;
         console.log(`[Calendar] Attempting ${integration.type} event creation...`);
         if (integration.type === 'google') {
-            result = await createGoogleCalendarEvent(integration, { title, start, end, description, parentEmail });
+            result = await createGoogleCalendarEvent(integration, { title, start, end, description: enrichedDescription, parentEmail, parentPhone });
         } else if (integration.type === 'outlook') {
-            result = await createOutlookCalendarEvent(integration, { title, start, end, description, parentEmail });
+            result = await createOutlookCalendarEvent(integration, { title, start, end, description: enrichedDescription, parentEmail, parentPhone });
         }
 
         if (result && result.success) {
@@ -433,7 +441,7 @@ async function createCalendarEvent(schoolId, opts) {
     }
 }
 
-async function createGoogleCalendarEvent(integration, { title, start, end, description, parentEmail }) {
+async function createGoogleCalendarEvent(integration, { title, start, end, description, parentEmail, parentPhone }) {
     try {
         const oauth2Client = createGoogleOAuthClient();
         const tokens = integration.config?.tokens;
@@ -458,12 +466,24 @@ async function createGoogleCalendarEvent(integration, { title, start, end, descr
         const tz = 'America/Chicago'; // Forced Global CST
 
         const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+        // Build attendee with phone in displayName so it appears in the guest list
+        const attendees = [];
+        if (parentEmail) {
+            const displayName = parentPhone ? `Parent (${parentPhone})` : 'Parent';
+            attendees.push({
+                email: parentEmail,
+                displayName,
+                comment: parentPhone ? `Phone: ${parentPhone}` : undefined,
+            });
+        }
+
         const event = {
             summary: title,
             description: description || '',
             start: { dateTime: formatInTimezone(start, tz), timeZone: tz },
             end: { dateTime: formatInTimezone(end, tz), timeZone: tz },
-            attendees: parentEmail ? [{ email: parentEmail }] : [],
+            attendees,
         };
         const insertOptions = {
             calendarId: 'primary',
@@ -484,7 +504,7 @@ async function createGoogleCalendarEvent(integration, { title, start, end, descr
     }
 }
 
-async function createOutlookCalendarEvent(integration, { title, start, end, description, parentEmail }) {
+async function createOutlookCalendarEvent(integration, { title, start, end, description, parentEmail, parentPhone }) {
     try {
         console.log(`[Calendar:Outlook] Starting event creation...`);
         console.log(`[Calendar:Outlook] Integration schoolId=${integration.schoolId}, hasAccessToken=${!!integration.config?.accessToken}, hasMsalCache=${!!integration.config?.msalCache}`);
@@ -503,14 +523,22 @@ async function createOutlookCalendarEvent(integration, { title, start, end, desc
         const school = await School.findById(integration.schoolId).select('timezone').lean();
         const tz = 'America/Chicago'; // Forced Global CST
 
+        // Build attendee with phone in display name so it appears in the guest list
+        const attendees = [];
+        if (parentEmail) {
+            const displayName = parentPhone ? `Parent (${parentPhone})` : 'Parent';
+            attendees.push({
+                emailAddress: { address: parentEmail, name: displayName },
+                type: 'required'
+            });
+        }
+
         const event = {
             subject: title,
             body: { contentType: 'text', content: description || '' },
             start: { dateTime: formatInTimezone(start, tz), timeZone: tz },
             end: { dateTime: formatInTimezone(end, tz), timeZone: tz },
-            attendees: parentEmail ? [
-                { emailAddress: { address: parentEmail }, type: 'required' }
-            ] : []
+            attendees,
         };
 
         console.log(`[Calendar:Outlook] POST https://graph.microsoft.com/v1.0/me/events`);

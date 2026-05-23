@@ -469,7 +469,8 @@ async function createTourBookingFromWebhook(webhook, aiResult) {
             startDateTime: start,
             endDateTime: end,
             description,
-            parentEmail: parentEmail || undefined
+            parentEmail: parentEmail || undefined,
+            parentPhone: phone || undefined,
         });
 
         console.log(`[Webhook Booking] Calendar event creation result:`, JSON.stringify(calResult, null, 2));
