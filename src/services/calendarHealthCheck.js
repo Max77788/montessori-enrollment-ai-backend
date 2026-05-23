@@ -21,7 +21,9 @@ const SYSTEM_ADMIN_EMAIL = process.env.ALERT_ADMIN_EMAIL || '';
 // ── Google health check ──────────────────────────────────────────────────────
 
 async function checkGoogleConnection(integration) {
-    if (!integration.config?.refreshToken) {
+    // Tokens are stored by the OAuth callback as config.tokens (Google's format)
+    const refreshToken = integration.config?.tokens?.refresh_token;
+    if (!refreshToken) {
         return { ok: false, reason: 'No refresh token stored' };
     }
 
@@ -29,7 +31,7 @@ async function checkGoogleConnection(integration) {
         const oauth2Client = new google.auth.OAuth2(
             GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
         );
-        oauth2Client.setCredentials({ refresh_token: integration.config.refreshToken });
+        oauth2Client.setCredentials({ refresh_token: refreshToken });
 
         // Try to refresh the access token — this is the definitive test
         const { credentials } = await oauth2Client.refreshAccessToken();
@@ -37,10 +39,11 @@ async function checkGoogleConnection(integration) {
             return { ok: false, reason: 'Token refresh returned no access token' };
         }
 
-        // Persist the new token
+        // Persist the new token back into config.tokens to match OAuth callback structure
         await Integration.findByIdAndUpdate(integration._id, {
-            'config.accessToken': credentials.access_token,
-            'config.expiry_date': credentials.expiry_date || null,
+            'config.tokens.access_token': credentials.access_token,
+            'config.tokens.expiry_date': credentials.expiry_date || null,
+            'config.tokens.refresh_token': refreshToken, // ensure refresh token stays
         });
 
         return { ok: true };

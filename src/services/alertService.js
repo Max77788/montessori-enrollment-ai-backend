@@ -169,9 +169,11 @@ async function checkCalendarConnections() {
             }
         }
 
-        // Group by school
+        // Group by school (only alert for integrations that were previously connected)
         const bySchool = new Map();
         for (const integration of integrations) {
+            // Skip integrations that were never successfully connected (no connectedAt)
+            if (!integration.connectedAt) continue;
             const sid = integration.schoolId.toString();
             if (!bySchool.has(sid)) bySchool.set(sid, []);
             bySchool.get(sid).push(integration);
