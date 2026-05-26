@@ -587,8 +587,10 @@ router.post('/book-meeting', async (req, res) => {
             console.log(`[BookMeeting] ❌ Invalid schoolId format: "${schoolId}"`);
             return res.status(400).json({ success: false, error: `Invalid schoolId: "${schoolId}". Expected a valid MongoDB ObjectId.` });
         }
-        if (!title) {
-            console.log('[BookMeeting] ❌ Missing title');
+        // Auto-generate title if missing (VAPI book_appointment tool does not send one)
+        const effectiveTitle = title || (parentName ? `School Tour – ${parentName}` : 'School Tour');
+        if (!effectiveTitle) {
+            console.log('[BookMeeting] ❌ Missing title and no parentName to auto-generate');
             return res.status(400).json({ success: false, error: 'title is required. Provide a meeting title.' });
         }
         if (!startDate || !startTime) {
@@ -631,7 +633,7 @@ router.post('/book-meeting', async (req, res) => {
         const startUtc = parseLocalDateTimeToUTC(localDate.toISOString(), tz) || localDate;
         const endUtc = new Date(startUtc.getTime() + duration * 60 * 1000);
 
-        console.log(`[book-meeting] schoolId=${schoolId} title="${title}"`);
+        console.log(`[book-meeting] schoolId=${schoolId} title="${effectiveTitle}"`);
         console.log(`[book-meeting] local=${startDate} ${startTime} ${tz} → UTC start=${startUtc.toISOString()} end=${endUtc.toISOString()}`);
         console.log(`[book-meeting] parentEmail=${parentEmail || 'none'} invitees=${(invitees || []).join(', ') || 'none'}`);
 
@@ -657,7 +659,7 @@ router.post('/book-meeting', async (req, res) => {
         const effectiveParentEmail = parentEmail || primaryInvitee || null;
 
         const fullDescription = description ||
-            `${title}\n` +
+            `${effectiveTitle}\n` +
             (parentName ? `Parent: ${parentName}\n` : '') +
             (parentPhone ? `Phone: ${parentPhone}\n` : '') +
             (effectiveParentEmail ? `Email: ${effectiveParentEmail}\n` : '') +
@@ -666,7 +668,7 @@ router.post('/book-meeting', async (req, res) => {
 
         // Build calendar event options
         const calOpts = {
-            title,
+            title: effectiveTitle,
             startDateTime: startUtc,
             endDateTime: endUtc,
             description: fullDescription,
@@ -718,7 +720,7 @@ router.post('/book-meeting', async (req, res) => {
 
                 try {
                     const icsContent = generateICS({
-                        title,
+                        title: effectiveTitle,
                         start: startUtc,
                         end: endUtc,
                         description: fullDescription,
@@ -727,8 +729,8 @@ router.post('/book-meeting', async (req, res) => {
 
                     await sendEmail(schoolId, {
                         to: invitee,
-                        subject: `Calendar Invite: ${title}`,
-                        text: `You've been invited to: ${title}\n\n` +
+                        subject: `Calendar Invite: ${effectiveTitle}`,
+                        text: `You've been invited to: ${effectiveTitle}\n\n` +
                             `Date: ${startDate} at ${startTime} (${tz})\n` +
                             `Location: ${school.address || school.name}\n\n` +
                             `${fullDescription}`,
@@ -772,7 +774,7 @@ router.post('/book-meeting', async (req, res) => {
         res.status(200).json({
             success: calResult.success,
             message: calResult.success
-                ? `Meeting "${title}" booked successfully on ${calResult.provider} calendar.`
+                ? `Meeting "${effectiveTitle}" booked successfully on ${calResult.provider} calendar.`
                 : `Calendar booking failed: ${calResult.error}`,
             providers: calResult.success ? [calResult.provider] : [],
             eventIds: calResult.success ? { [calResult.provider]: calResult.eventId } : {},
